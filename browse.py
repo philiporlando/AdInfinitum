@@ -31,13 +31,13 @@ logging.getLogger("selenium").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-ADNAUSEAM_XPI  = "/extensions/adnauseam.xpi"
-SESSION_MEAN   = int(os.getenv("SESSION_MEAN",   "60"))
+ADNAUSEAM_XPI  = os.getenv("ADNAUSEAM_XPI", "/extensions/adnauseam.xpi")
+SESSION_MEAN   = int(os.getenv("SESSION_MEAN",   "240"))
 SESSION_STDDEV = int(os.getenv("SESSION_STDDEV", "90"))
-SESSION_MIN    = int(os.getenv("SESSION_MIN",    "10"))
-SESSION_MAX    = int(os.getenv("SESSION_MAX",    "300"))
-PAUSE_MIN      = int(os.getenv("PAUSE_MIN",      "5"))
-PAUSE_MAX      = int(os.getenv("PAUSE_MAX",      "60"))
+SESSION_MIN    = int(os.getenv("SESSION_MIN",    "60"))
+SESSION_MAX    = int(os.getenv("SESSION_MAX",    "600"))
+PAUSE_MIN      = int(os.getenv("PAUSE_MIN",      "15"))
+PAUSE_MAX      = int(os.getenv("PAUSE_MAX",      "120"))
 RESTART_EVERY  = int(os.getenv("RESTART_EVERY",  "10"))
 
 SEED_URLS = [
@@ -126,19 +126,22 @@ def human_scroll(driver: webdriver.Firefox):
 
 def get_adnauseam_stats(driver: webdriver.Firefox) -> None:
     """
-    Open AdNauseam's options page in a new tab, scrape stats, then close it.
+    Open AdNauseam options page in a new tab, scrape stats, then close it.
     Always restores the driver to a clean single-tab state afterwards.
     """
     main_handle = driver.window_handles[0]
 
     try:
-        # Open a fresh tab for the stats check
         driver.switch_to.window(main_handle)
         driver.execute_script("window.open('about:blank', '_blank')")
         stats_handle = driver.window_handles[-1]
         driver.switch_to.window(stats_handle)
 
-        # Resolve AdNauseam's options URL via the WebExtension management API
+        # browser.management is only available on privileged pages — navigate
+        # to about:blank first, then the API becomes accessible
+        driver.get("about:blank")
+        driver.set_script_timeout(10)
+
         options_url = driver.execute_async_script("""
             const done = arguments[0];
             try {
@@ -152,18 +155,16 @@ def get_adnauseam_stats(driver: webdriver.Firefox) -> None:
         """)
 
         if not options_url:
-            log.debug("Could not resolve AdNauseam options URL — extension may still be initialising")
+            log.debug("Could not resolve AdNauseam options URL")
             return
 
         log.debug("AdNauseam options URL: %s", options_url)
         driver.get(options_url)
         time.sleep(2)
 
-        # Dump the raw page text at DEBUG so we can identify the right selectors
-        raw = driver.execute_script("return document.body.innerText || ''")
-        log.debug("AdNauseam options page text:\n%s", raw[:600])
+        raw = driver.execute_script("return document.body ? document.body.innerText : ''")
+        log.debug("AdNauseam options page text:\n%s", raw[:800])
 
-        # Scrape counters — selectors matched against AdNauseam 3.x DOM
         stats = driver.execute_script("""
             const q = sel => {
                 const el = document.querySelector(sel);
@@ -188,7 +189,6 @@ def get_adnauseam_stats(driver: webdriver.Firefox) -> None:
         log.debug("AdNauseam stats check failed: %s", exc)
 
     finally:
-        # Always clean up: close stats tab, switch back to main
         ensure_main_window(driver)
 
 
