@@ -27,6 +27,8 @@ log = logging.getLogger("AdNauseam")
 XPI_PATH = os.getenv("ADNAUSEAM_XPI", "/extensions/adnauseam.xpi")
 PROFILE_DIR = Path("/tmp/adnauseam_profile")
 HEARTBEAT_FILE = Path("/tmp/heartbeat")
+FILTER_POLL_INTERVAL = 5    # seconds between filter readiness checks
+FILTER_POLL_TIMEOUT  = 300  # max seconds to wait for filter lists
 
 def load_seed_urls():
     config_path = Path("/app/urls.json")
@@ -161,12 +163,71 @@ def activate_adnauseam(driver, uuid):
             return results;
         """)
 
-        log.info(f"⚙️    AdNauseam settings: {result}")
+        if isinstance(result, dict) and 'error' not in result:
+            activated = [k for k, v in result.items() if v == 'activated']
+            if activated:
+                log.info(f"⚙️    Enabled: {', '.join(activated)}")
+            else:
+                log.info(f"⚙️    All ad detection settings already active")
+        else:
+            log.warning(f"⚙️    Settings check returned unexpected result: {result}")
 
     except Exception as e:
-        log.warning(f"Activation step failed: {e}")
+        log.warning(f"Settings activation failed: {e}")
     finally:
         driver.set_page_load_timeout(45)
+
+def get_filter_count(driver, uuid):
+    """
+    Reads #listsOfBlockedHostsPrompt from the 3p-filters.html iframe.
+    Returns the network filter count as an integer, or 0 if not yet loaded.
+    Expected text format: "167,399 network filters / 42,753 cosmetic filters from:"
+    """
+    filters_url = f"moz-extension://{uuid}/dashboard.html#3p-filters.html"
+    try:
+        driver.set_page_load_timeout(20)
+        driver.get(filters_url)
+        time.sleep(3)
+
+        text = driver.execute_script("""
+            const iframe = document.getElementById('iframe');
+            if (!iframe) return null;
+            const doc = iframe.contentDocument || iframe.contentWindow.document;
+            if (!doc) return null;
+            const el = doc.getElementById('listsOfBlockedHostsPrompt');
+            return el ? el.innerText.trim() : null;
+        """)
+
+        if text:
+            # Parse "167,399 network filters..." -> 167399
+            match = re.search(r'([\d,]+)\s+network filters', text)
+            if match:
+                return int(match.group(1).replace(',', ''))
+    except:
+        pass
+    return 0
+
+def wait_for_filters(driver, uuid):
+    """
+    Poll #listsOfBlockedHostsPrompt until network filter count is non-zero,
+    confirming AdNauseam's filter lists have fully downloaded and are active.
+    """
+    log.info("⏳   Waiting for ad detection rules to download...")
+    deadline = time.time() + FILTER_POLL_TIMEOUT
+    elapsed = 0
+
+    while time.time() < deadline:
+        count = get_filter_count(driver, uuid)
+        if count > 0:
+            log.info(f"✅   Ad detection ready — {count:,} rules loaded ({elapsed}s)")
+            return True
+        elapsed += FILTER_POLL_INTERVAL
+        log.info(f"⏳   Still downloading rules... ({elapsed}s elapsed)")
+        update_heartbeat()
+        time.sleep(FILTER_POLL_INTERVAL)
+
+    log.warning(f"⚠️   Rule download timed out after {FILTER_POLL_TIMEOUT}s, proceeding anyway")
+    return False
 
 def scrape_vault_stats(driver, uuid):
     """
@@ -232,8 +293,6 @@ def build_driver():
         log.info("💉   Injecting AdNauseam...")
         driver.install_addon(XPI_PATH, temporary=True)
 
-        log.info("⏳   Warming up (20s for filter sync)...")
-        time.sleep(20)
         return driver
     except Exception as e:
         log.error(f"❌   Boot failed: {e}")
@@ -253,6 +312,7 @@ def main():
     session_count = 0
     current_uuid = None
     activated = False
+    filters_ready = False
 
     while True:
         try:
@@ -265,7 +325,7 @@ def main():
             try:
                 driver.get(url)
             except TimeoutException:
-                log.warning("⏳   Load timed out, proceeding anyway...")
+                log.warning("⏳   Page load timed out, proceeding anyway...")
 
             update_heartbeat()
 
@@ -285,6 +345,10 @@ def main():
                 activate_adnauseam(driver, current_uuid)
                 activated = True
 
+            # Filter readiness check (once per driver lifetime)
+            if current_uuid and activated and not filters_ready:
+                filters_ready = wait_for_filters(driver, current_uuid)
+
             # Vault Stats
             if current_uuid:
                 clicked, collected, showing = scrape_vault_stats(driver, current_uuid)
@@ -299,12 +363,14 @@ def main():
                 driver = build_driver()
                 current_uuid = None
                 activated = False
+                filters_ready = False
 
         except Exception as e:
             log.error(f"⚠️    Loop Error: {e}")
             driver = build_driver()
             current_uuid = None
             activated = False
+            filters_ready = False
 
 if __name__ == "__main__":
     main()
