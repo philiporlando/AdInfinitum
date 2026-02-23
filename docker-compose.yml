@@ -3,16 +3,8 @@ services:
     build: .
     container_name: ad-infinitum
     restart: unless-stopped
+    env_file: .env
 
-    environment:
-      SESSION_MEAN: 240
-      SESSION_STDDEV: 90
-      SESSION_MIN: 60
-      SESSION_MAX: 600
-      PAUSE_MIN: 15
-      PAUSE_MAX: 120
-
-    # Firefox needs extra shared memory or it crashes in Docker
     shm_size: "512mb"
 
     deploy:

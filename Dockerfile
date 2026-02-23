@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
-    PATH="/app/.venv/bin:/root/.local/bin:$PATH"
+    PATH="/app/.venv/bin:/root/.local/bin:$PATH" \
+    MOZ_ALLOW_DOWNGRADE=1
 
 # ── Firefox + all libs needed to run headless as root ────────────────────────
 RUN apt-get update && apt-get install -y \
@@ -44,10 +45,5 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 COPY browse.py ./
-
-ENV SESSION_DURATION=300 \
-    PAUSE_BETWEEN=60 \
-    ADNAUSEAM_XPI=/extensions/adnauseam.xpi \
-    MOZ_ALLOW_DOWNGRADE=1
 
 CMD ["uv", "run", "python", "browse.py"]
