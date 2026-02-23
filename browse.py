@@ -32,12 +32,12 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 ADNAUSEAM_XPI  = "/extensions/adnauseam.xpi"
-SESSION_MEAN   = int(os.getenv("SESSION_MEAN",   "240"))
+SESSION_MEAN   = int(os.getenv("SESSION_MEAN",   "60"))
 SESSION_STDDEV = int(os.getenv("SESSION_STDDEV", "90"))
-SESSION_MIN    = int(os.getenv("SESSION_MIN",    "60"))
-SESSION_MAX    = int(os.getenv("SESSION_MAX",    "600"))
-PAUSE_MIN      = int(os.getenv("PAUSE_MIN",      "15"))
-PAUSE_MAX      = int(os.getenv("PAUSE_MAX",      "120"))
+SESSION_MIN    = int(os.getenv("SESSION_MIN",    "10"))
+SESSION_MAX    = int(os.getenv("SESSION_MAX",    "300"))
+PAUSE_MIN      = int(os.getenv("PAUSE_MIN",      "5"))
+PAUSE_MAX      = int(os.getenv("PAUSE_MAX",      "60"))
 RESTART_EVERY  = int(os.getenv("RESTART_EVERY",  "10"))
 
 SEED_URLS = [
