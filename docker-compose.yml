@@ -1,23 +1,33 @@
 services:
-  ad-nauseam:
+  adnauseam:
     build: .
-    container_name: ad-nauseam
+    container_name: adnauseam
     restart: unless-stopped
     env_file: .env
-    
-    # Use public DNS to bypass Pi-hole filtering (AdNauseam needs to see ads)
+    ipc: host
+    shm_size: "4gb"
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+    tmpfs:
+      - /tmp/adnauseam_profile:size=4G,mode=1777
     dns:
-      - 8.8.8.8        # Google DNS
-      - 1.1.1.1        # Cloudflare DNS
-
-    shm_size: "2gb"
-
+      - 8.8.8.8
+      - 1.1.1.1
     deploy:
       resources:
         limits:
-          cpus: "1.0"
+          cpus: "2.0"
+          memory: 8G 
+        reservations:
           memory: 4G
-
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/heartbeat -mmin -5 | grep -q /tmp/heartbeat"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 2m
     logging:
       driver: "json-file"
       options:
