@@ -10,13 +10,13 @@ services:
       - 8.8.8.8        # Google DNS
       - 1.1.1.1        # Cloudflare DNS
 
-    shm_size: "512mb"
+    shm_size: "2gb"
 
     deploy:
       resources:
         limits:
           cpus: "1.0"
-          memory: 1G
+          memory: 4G
 
     logging:
       driver: "json-file"
