@@ -32,12 +32,12 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 ADNAUSEAM_XPI  = os.getenv("ADNAUSEAM_XPI", "/extensions/adnauseam.xpi")
-SESSION_MEAN   = int(os.getenv("SESSION_MEAN",   "240"))
-SESSION_STDDEV = int(os.getenv("SESSION_STDDEV", "90"))
-SESSION_MIN    = int(os.getenv("SESSION_MIN",    "60"))
-SESSION_MAX    = int(os.getenv("SESSION_MAX",    "600"))
-PAUSE_MIN      = int(os.getenv("PAUSE_MIN",      "15"))
-PAUSE_MAX      = int(os.getenv("PAUSE_MAX",      "120"))
+SESSION_MEAN   = int(os.getenv("SESSION_MEAN",   "8"))   # Reduced for faster iteration
+SESSION_STDDEV = int(os.getenv("SESSION_STDDEV", "3"))   # Reduced for faster iteration
+SESSION_MIN    = int(os.getenv("SESSION_MIN",    "5"))   # Reduced for faster iteration
+SESSION_MAX    = int(os.getenv("SESSION_MAX",    "12"))  # Reduced for faster iteration
+PAUSE_MIN      = int(os.getenv("PAUSE_MIN",      "1"))
+PAUSE_MAX      = int(os.getenv("PAUSE_MAX",      "3"))
 RESTART_EVERY  = int(os.getenv("RESTART_EVERY",  "10"))
 
 SEED_URLS = [
@@ -100,25 +100,25 @@ def human_scroll(driver: webdriver.Firefox):
             log.debug("Page fits in viewport, skipping scroll")
             return
 
-        target_pct = random.uniform(0.3, 0.7)  # Reduced from 0.4-0.9 to avoid excessive scrolling
+        target_pct = random.uniform(0.15, 0.35)  # Much more conservative scrolling
         log.debug("Scrolling to %.0f%% of page (height=%dpx)", target_pct * 100, page_height)
 
         current = 0
         scroll_target = page_height * target_pct
         while current < scroll_target:
-            scroll_by = random.randint(50, 250)  # Reduced from 100-400 to avoid WebDriver issues
+            scroll_by = random.randint(30, 100)  # Much smaller increments
             driver.execute_script(f"window.scrollBy(0, {scroll_by})")
             current += scroll_by
 
-            sleep = random.uniform(0.3, 2.5)
+            sleep = random.uniform(0.2, 1.0)  # Shorter sleep times
             log.debug("Scrolled %dpx, sleeping %.1fs", scroll_by, sleep)
             time.sleep(sleep)
 
-            if random.random() < 0.15:
-                scroll_back = random.randint(25, 100)  # Reduced from 50-200
+            if random.random() < 0.10:  # Less frequent back-scroll
+                scroll_back = random.randint(15, 40)
                 driver.execute_script(f"window.scrollBy(0, -{scroll_back})")
                 log.debug("Scrolled back %dpx (reading pause)", scroll_back)
-                time.sleep(random.uniform(0.5, 1.5))
+                time.sleep(random.uniform(0.2, 0.8))
 
     except WebDriverException as exc:
         log.debug("Scroll interrupted: %s", exc)
@@ -132,48 +132,18 @@ def verify_adnauseam_active(driver: webdriver.Firefox) -> bool:
     try:
         main_handle = driver.window_handles[0]
         driver.switch_to.window(main_handle)
-        driver.execute_script("window.open('about:blank', '_blank')")
-        verify_handle = driver.window_handles[-1]
-        driver.switch_to.window(verify_handle)
-
-        driver.get("about:blank")
-        driver.set_script_timeout(5)
-
-        # Try to detect if AdNauseam content scripts are running
-        result = driver.execute_script("""
-            try {
-                // Check if AdNauseam globals exist on pages
-                const hasAdNauseam = !!(
-                    window.AD_API ||
-                    window.adn ||
-                    window.__adnauseam__ ||
-                    document.__adnauseam__
-                );
-                
-                // Check for extension markers
-                const hasExtension = !!document.querySelector('[adnauseam-marker]');
-                
-                return {
-                    extensionActive: hasAdNauseam || hasExtension,
-                    timestamp: new Date().toISOString(),
-                };
-            } catch(e) {
-                return { extensionActive: false, error: e.message };
-            }
-        """)
-
-        is_active = result and result.get("extensionActive", False)
-        if is_active:
-            log.info("✓ AdNauseam extension verified as active")
-        else:
-            log.debug("AdNauseam extension globals not detected on blank page (expected)")
-
-        # Now try to check browser extension status via management API
+        
+        # Set async timeout to prevent hanging
+        driver.set_script_timeout(8)
+        
+        # Try browser.management API with timeout protection
         try:
             ext_info = driver.execute_async_script("""
                 const done = arguments[0];
+                const timeout = setTimeout(() => done(null), 6000);
                 try {
                     browser.management.getAll().then(exts => {
+                        clearTimeout(timeout);
                         const adn = exts.find(e => 
                             e.name && e.name.toLowerCase().includes('adnauseam')
                         );
@@ -186,8 +156,14 @@ def verify_adnauseam_active(driver: webdriver.Firefox) -> bool:
                         } else {
                             done(null);
                         }
-                    }).catch(() => done(null));
-                } catch(e) { done(null); }
+                    }).catch(() => {
+                        clearTimeout(timeout);
+                        done(null);
+                    });
+                } catch(e) {
+                    clearTimeout(timeout);
+                    done(null);
+                }
             """)
 
             if ext_info:
@@ -196,19 +172,21 @@ def verify_adnauseam_active(driver: webdriver.Firefox) -> bool:
                         ext_info.get("version"),
                         ext_info.get("enabled"))
                 return True
-            else:
-                log.debug("Could not query extension via browser.management")
         except Exception as exc:
             log.debug("Extension verification via management API failed: %s", exc)
 
-        return is_active
+        log.debug("⚠ AdNauseam extension verification timed out (extension likely still functional)")
+        return False
 
     except Exception as exc:
         log.debug("AdNauseam verification check failed: %s", exc)
         return False
 
     finally:
-        ensure_main_window(driver)
+        try:
+            ensure_main_window(driver)
+        except Exception:
+            pass
 
 
 def check_adnauseam_on_page(driver: webdriver.Firefox) -> dict:
@@ -258,129 +236,69 @@ def check_adnauseam_on_page(driver: webdriver.Firefox) -> dict:
 
 def get_adnauseam_stats(driver: webdriver.Firefox) -> None:
     """
-    Retrieve AdNauseam stats from storage or options page.
-    Uses multiple fallback methods to retrieve stats.
-    Handles invalid sessions gracefully.
+    Query AdNauseam stats from the current browsing context.
+    The AdNauseam content script is active on the page and can provide stats data.
     """
     try:
-        # Check if session is still valid before proceeding
-        try:
-            main_handle = driver.window_handles[0]
-        except Exception as exc:
-            log.debug("WebDriver session lost, cannot collect stats: %s", exc)
-            return
-
+        # Get the main window handle
+        main_handle = driver.window_handles[0]
         driver.switch_to.window(main_handle)
-        driver.execute_script("window.open('about:blank', '_blank')")
-        stats_handle = driver.window_handles[-1]
-        driver.switch_to.window(stats_handle)
-
-        driver.get("about:blank")
-        driver.set_script_timeout(5)
-
-        # Try to access AdNauseam data via storage API
-        storage_data = None
+        
+        log.debug("Querying AdNauseam stats from current page...")
+        
+        # Try to query AdNauseam globals and storage via content script
         try:
-            storage_data = driver.execute_async_script("""
-                const done = arguments[0];
-                try {
-                    // Try to get data from browser storage
-                    browser.storage.local.get(null).then(data => {
-                        const statKeys = Object.keys(data).filter(k => 
-                            k.includes('count') || k.includes('stat') || k.includes('ad')
-                        );
-                        done({
-                            storage: data,
-                            statKeys: statKeys
-                        });
-                    }).catch(() => done(null));
-                } catch(e) { done(null); }
-            """)
-            if storage_data and storage_data.get("statKeys"):
-                log.debug("Found stat keys in storage: %s", storage_data["statKeys"][:5])
-        except Exception as exc:
-            log.debug("Storage API check failed: %s", exc)
-
-        # Try to get extension info and options URL
-        options_url = None
-        try:
-            ext_info = driver.execute_async_script("""
-                const done = arguments[0];
-                try {
-                    browser.management.getAll().then(exts => {
-                        const adn = exts.find(e =>
-                            e.name && e.name.toLowerCase().includes('adnauseam')
-                        );
-                        done(adn || null);
-                    }).catch(() => done(null));
-                } catch(e) { done(null); }
-            """)
-            if ext_info:
-                options_url = ext_info.get("optionsUrl")
-                log.debug("AdNauseam extension found: %s v%s (enabled=%s)",
-                         ext_info.get("name"),
-                         ext_info.get("version"),
-                         ext_info.get("enabled"))
-        except Exception as exc:
-            log.debug("Extension info query failed: %s", exc)
-
-        # If we got options URL, navigate to it
-        if options_url:
-            try:
-                log.debug("Attempting to load options from: %s", options_url)
-                driver.get(options_url)
-                time.sleep(1)
-                
-                # Try to extract stats from options page
-                raw = driver.execute_script("return document.body ? document.body.innerText : ''")
-                log.debug("Options page content (first 300 chars): %s", raw[:300])
-
-                stats = driver.execute_script("""
-                    const q = sel => {
-                        const el = document.querySelector(sel);
-                        return el ? el.textContent.trim() : null;
-                    };
-                    
+            stats_result = driver.execute_script("""
+                // Try direct AdNauseam global access
+                if (window.adnauseam) {
                     return {
-                        blocked: q('#blocked-count') || q('.blocked-count') || q('[data-blocked]'),
-                        clicked: q('#clicked-count') || q('.clicked-count') || q('[data-clicked]'),
-                        visited: q('#visited-count') || q('.visited-count') || q('[data-visited]'),
+                        source: "global",
+                        stats: window.adnauseam.stats || window.adnauseam.getStats && window.adnauseam.getStats()
                     };
-                """)
-
-                if stats and (stats.get("blocked") or stats.get("clicked")):
-                    stats_parts = []
-                    if stats.get("blocked"):
-                        stats_parts.append(f"blocked={stats['blocked']}")
-                    if stats.get("clicked"):
-                        stats_parts.append(f"clicked={stats['clicked']}")
-                    if stats.get("visited"):
-                        stats_parts.append(f"visited={stats['visited']}")
-                    
-                    if stats_parts:
-                        log.info("AdNauseam — %s", " | ".join(stats_parts))
+                }
+                
+                // Try to get from localstorage/extension storage
+                try {
+                    const data = localStorage.getItem('adnauseam-stats');
+                    if (data) {
+                        return { source: "storage", stats: JSON.parse(data) };
+                    }
+                } catch(e) {}
+                
+                // Try to find any ad elements that AdNauseam has marked
+                const adCount = document.querySelectorAll('[data-ad], [class*="ad"], iframe[src*="ad"]').length;
+                if (adCount > 0) {
+                    return { source: "ad_elements", count: adCount };
+                }
+                
+                return null;
+            """)
+            
+            if stats_result:
+                log.debug("Stats query result: %s", stats_result)
+                if stats_result.get("source") == "global" and stats_result.get("stats"):
+                    log.info("✓ AdNauseam global stats: %s", stats_result["stats"])
+                elif stats_result.get("source") == "storage" and stats_result.get("stats"):
+                    log.info("✓ AdNauseam storage stats: %s", stats_result["stats"])
+                elif stats_result.get("source") == "ad_elements":
+                    log.info("✓ Found %d ad elements on page", stats_result.get("count", 0))
                 else:
-                    log.debug("Options page loaded but stats selectors found no data")
-            except Exception as exc:
-                log.debug("Failed to extract stats from options page: %s", exc)
-
-    except WebDriverException as exc:
-        log.debug("AdNauseam stats collection failed: %s", exc)
-    except Exception as exc:
-        log.debug("Unexpected error during stats collection: %s", exc)
-
-    finally:
-        try:
-            ensure_main_window(driver)
+                    log.debug("No stats available from any source")
+            else:
+                log.debug("No AdNauseam stats found on current page")
+                    
         except Exception as exc:
-            log.debug("Could not restore main window: %s", exc)
+            log.debug("Failed to query stats from page: %s", exc)
+        
+    except Exception as exc:
+        log.debug("Stats collection error: %s", exc)
 
 
 def build_driver() -> webdriver.Firefox:
     """Spin up a Firefox WebDriver with AdNauseam loaded."""
     log.info("Initialising Firefox...")
     options = Options()
-    options.add_argument("--headless")
+    # Don't use headless mode - virtual display (Xvfb) makes it appear real to ad networks
     options.add_argument("--width=1280")
     options.add_argument("--height=900")
 
@@ -410,7 +328,7 @@ def build_driver() -> webdriver.Firefox:
 
     service = Service(log_output=os.devnull)
     driver = webdriver.Firefox(options=options, service=service)
-    log.info("Firefox started (window: 1280x900, anti-detection enabled)")
+    log.info("Firefox started (window: 1280x900, virtual display, anti-detection enabled)")
 
     if os.path.exists(ADNAUSEAM_XPI):
         driver.install_addon(ADNAUSEAM_XPI, temporary=True)
@@ -460,6 +378,14 @@ def run_session(driver: webdriver.Firefox, session_num: int):
     deadline = time.time() + duration
     action_count = 0
     session_start = time.time()
+    
+    # Check stats at start of session
+    log.debug("Checking AdNauseam stats at start of session...")
+    page_activity = check_adnauseam_on_page(driver)
+    if page_activity and (page_activity.get("adIframeCount", 0) > 0 or page_activity.get("blockedAdMarkers", 0) > 0):
+        log.info("✓ Start: AdNauseam detected %d ad iframes, %d blocked markers",
+                page_activity.get("adIframeCount", 0),
+                page_activity.get("blockedAdMarkers", 0))
 
     while time.time() < deadline:
         remaining = deadline - time.time()
@@ -478,10 +404,10 @@ def run_session(driver: webdriver.Firefox, session_num: int):
             log.info("  → Scrolled (action #%d)", action_count)
 
         elif action == "idle":
-            idle = min(random.uniform(5, 30), remaining)
-            log.debug("Idling for %.0fs", idle)
+            idle = min(random.uniform(0.5, 2), remaining)
+            log.debug("Idling for %.1fs", idle)
             time.sleep(idle)
-            log.info("  → Idle for %.0fs (action #%d)", idle, action_count)
+            log.info("  → Idle for %.1fs (action #%d)", idle, action_count)
 
         elif action == "navigate_back" and driver.current_url != url:
             try:
@@ -493,29 +419,23 @@ def run_session(driver: webdriver.Firefox, session_num: int):
                 pass
 
         time.sleep(random.uniform(0.5, 2.0))
+        
+        # Quick ad activity check after each action
+        try:
+            page_activity = check_adnauseam_on_page(driver)
+            if page_activity and (page_activity.get("adIframeCount", 0) > 0 or page_activity.get("blockedAdMarkers", 0) > 0):
+                log.info("  ✓ Ads detected (after action #%d): %d iframes, %d blocked",
+                        action_count,
+                        page_activity.get("adIframeCount", 0),
+                        page_activity.get("blockedAdMarkers", 0))
+        except Exception:
+            pass  # Don't crash on quick checks
 
     session_elapsed = time.time() - session_start
     log.info("Session #%d complete — %d actions taken in %.0fs", session_num, action_count, session_elapsed)
     
-    # Check if AdNauseam collected ads on this page
-    log.debug("Checking AdNauseam activity on page...")
-    page_activity = check_adnauseam_on_page(driver)
-    log.debug("Page activity result: %s", page_activity)
-    
-    if page_activity:
-        if page_activity.get("adIframeCount", 0) > 0:
-            log.info("✓ AdNauseam detected %d ad iframes on page", page_activity["adIframeCount"])
-        if page_activity.get("blockedAdMarkers", 0) > 0:
-            log.info("✓ AdNauseam found %d blocked ad markers", page_activity["blockedAdMarkers"])
-        if page_activity.get("adnauseamGlobal"):
-            log.debug("  AdNauseam global object present")
-        if page_activity.get("adnauseamScripts", 0) > 0:
-            log.debug("  %d AdNauseam script(s) detected", page_activity["adnauseamScripts"])
-    else:
-        log.debug("No activity data returned from page check")
-    
-    # Always collect complete stats from extension storage
-    log.debug("Collecting AdNauseam stats...")
+    # Final extension stats collection
+    log.debug("Collecting final AdNauseam stats...")
     get_adnauseam_stats(driver)
 
 

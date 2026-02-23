@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y \
     wget \
     ca-certificates \
     tar \
+    xvfb \
+    x11-utils \
     libgtk-3-0 \
     libdbus-glib-1-2 \
     libxt6 \
@@ -46,4 +48,31 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 COPY browse.py ./
 
-CMD ["uv", "run", "python", "browse.py"]
+# ── Entrypoint script to start Xvfb and Python ────────────────────────────────
+RUN cat > /app/entrypoint.sh << 'EOF' && chmod +x /app/entrypoint.sh
+#!/bin/bash
+set -e
+
+export DISPLAY=:99
+export XVFBARGS="-screen 0 1280x900x24"
+
+# Start Xvfb in background
+echo "Starting Xvfb on $DISPLAY..."
+Xvfb $DISPLAY $XVFBARGS > /tmp/xvfb.log 2>&1 &
+XVFB_PID=$!
+
+# Give Xvfb time to start
+sleep 2
+
+# Trap to cleanup Xvfb on exit
+cleanup() {
+    echo "Stopping Xvfb..."
+    kill $XVFB_PID 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# Run the Python script
+exec uv run python browse.py
+EOF
+
+ENTRYPOINT ["/app/entrypoint.sh"]
