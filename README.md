@@ -12,7 +12,7 @@ The tool orchestrates a headless Firefox instance with [Selenium](https://www.se
 The official image is published to GitHub Container Registry (GHCR): 
 
 ```bash
-docker run --rm ghcr.io/philiporlando/adinfinitum:latest
+docker run --rm --name adinfinitum ghcr.io/philiporlando/adinfinitum:latest
 ```
 
 ## Docker Compose
