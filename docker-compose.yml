@@ -4,6 +4,11 @@ services:
     container_name: ad-nauseam
     restart: unless-stopped
     env_file: .env
+    
+    # Use public DNS to bypass Pi-hole filtering (AdNauseam needs to see ads)
+    dns:
+      - 8.8.8.8        # Google DNS
+      - 1.1.1.1        # Cloudflare DNS
 
     shm_size: "512mb"
 
