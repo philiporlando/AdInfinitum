@@ -44,7 +44,7 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD test -f /tmp/heartbeat || exit 1
 
 CMD rm -f /tmp/.X*-lock && \
-    Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset & \
+    Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & \
     export DISPLAY=:99 && \
     sleep 3 && \
     uv run python -u browse.py

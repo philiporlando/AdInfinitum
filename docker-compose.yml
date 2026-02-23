@@ -1,7 +1,7 @@
 services:
-  ad-nauseam:
+  adnauseam:
     build: .
-    container_name: ad-nauseam
+    container_name: adnauseam
     restart: unless-stopped
     env_file: .env
     ipc: host
