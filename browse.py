@@ -29,9 +29,7 @@ PROFILE_DIR = Path("/tmp/adnauseam_profile")
 HEARTBEAT_FILE = Path("/tmp/heartbeat")
 
 SEED_URLS = [
-    "https://www.theverge.com", "https://www.cnn.com", "https://www.msn.com",
-    "https://www.reuters.com", "https://www.theguardian.com", "https://www.bloomberg.com",
-    "https://www.reddit.com", "https://www.yahoo.com", "https://www.ebay.com"
+    "https://www.yahoo.com",
 ]
 
 # --- Helper Functions ---
@@ -114,6 +112,51 @@ def find_uuid(driver):
         log.info(f"✅   UUID found via debugger: {uuid}")
     return uuid
 
+def activate_adnauseam(driver, uuid):
+    """
+    Navigate to the AdNauseam options page and ensure hidingAds, clickingAds,
+    and blockingMalware are all enabled. Checkboxes live inside the #iframe.
+    Confirmed IDs from live DOM inspection of options.html:
+      #hidingAds, #clickingAds, #blockingMalware
+    """
+    options_url = f"moz-extension://{uuid}/dashboard.html#options.html"
+    try:
+        driver.set_page_load_timeout(20)
+        driver.get(options_url)
+        time.sleep(6)  # wait for iframe + JS to fully render
+
+        result = driver.execute_script("""
+            const iframe = document.getElementById('iframe');
+            if (!iframe) return {error: 'no iframe found'};
+            const doc = iframe.contentDocument || iframe.contentWindow.document;
+            if (!doc) return {error: 'cannot access iframe document'};
+
+            const settings = ['hidingAds', 'clickingAds', 'blockingMalware'];
+            const results = {};
+
+            for (const name of settings) {
+                const el = doc.getElementById(name);
+                if (!el) {
+                    results[name] = 'not found';
+                    continue;
+                }
+                if (!el.checked) {
+                    el.click();
+                    results[name] = 'activated';
+                } else {
+                    results[name] = 'already on';
+                }
+            }
+            return results;
+        """)
+
+        log.info(f"⚙️    AdNauseam settings: {result}")
+
+    except Exception as e:
+        log.warning(f"Activation step failed: {e}")
+    finally:
+        driver.set_page_load_timeout(45)
+
 def scrape_vault_stats(driver, uuid):
     """
     Visits vault.html and extracts clicked/collected counts from the #stats bar.
@@ -191,13 +234,14 @@ def main():
     signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
     signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
 
-    log.info("♾️    Ad Infinitum Started")
+    log.info("♾️    AdInfinitum Started")
     driver = build_driver()
     if not driver:
         sys.exit(1)
 
     session_count = 0
     current_uuid = None
+    activated = False
 
     while True:
         try:
@@ -225,6 +269,11 @@ def main():
             if not current_uuid:
                 current_uuid = find_uuid(driver)
 
+            # Activation (once per driver lifetime)
+            if current_uuid and not activated:
+                activate_adnauseam(driver, current_uuid)
+                activated = True
+
             # Vault Stats
             if current_uuid:
                 clicked, collected, showing = scrape_vault_stats(driver, current_uuid)
@@ -238,11 +287,13 @@ def main():
                 driver.quit()
                 driver = build_driver()
                 current_uuid = None
+                activated = False
 
         except Exception as e:
             log.error(f"⚠️    Loop Error: {e}")
             driver = build_driver()
             current_uuid = None
+            activated = False
 
 if __name__ == "__main__":
     main()
