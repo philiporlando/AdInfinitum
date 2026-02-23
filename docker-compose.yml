@@ -1,7 +1,7 @@
 services:
-  ad-infinitum:
+  ad-nauseam:
     build: .
-    container_name: ad-infinitum
+    container_name: ad-nauseam
     restart: unless-stopped
     env_file: .env
 

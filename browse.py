@@ -16,7 +16,7 @@ import sys
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import WebDriverException, NoSuchWindowException
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -32,12 +32,12 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 ADNAUSEAM_XPI  = "/extensions/adnauseam.xpi"
-SESSION_MEAN   = int(os.getenv("SESSION_MEAN",   "60"))
+SESSION_MEAN   = int(os.getenv("SESSION_MEAN",   "240"))
 SESSION_STDDEV = int(os.getenv("SESSION_STDDEV", "90"))
-SESSION_MIN    = int(os.getenv("SESSION_MIN",    "10"))
-SESSION_MAX    = int(os.getenv("SESSION_MAX",    "300"))
-PAUSE_MIN      = int(os.getenv("PAUSE_MIN",      "5"))
-PAUSE_MAX      = int(os.getenv("PAUSE_MAX",      "60"))
+SESSION_MIN    = int(os.getenv("SESSION_MIN",    "60"))
+SESSION_MAX    = int(os.getenv("SESSION_MAX",    "600"))
+PAUSE_MIN      = int(os.getenv("PAUSE_MIN",      "15"))
+PAUSE_MAX      = int(os.getenv("PAUSE_MAX",      "120"))
 RESTART_EVERY  = int(os.getenv("RESTART_EVERY",  "10"))
 
 SEED_URLS = [
@@ -73,6 +73,24 @@ def pause_duration() -> float:
     return pause
 
 
+def ensure_main_window(driver: webdriver.Firefox) -> bool:
+    """Close any extra tabs and make sure we're on handle[0]. Returns False if unrecoverable."""
+    try:
+        handles = driver.window_handles
+        # Close any extra tabs that got left open
+        for handle in handles[1:]:
+            try:
+                driver.switch_to.window(handle)
+                driver.close()
+            except WebDriverException:
+                pass
+        driver.switch_to.window(driver.window_handles[0])
+        return True
+    except WebDriverException as exc:
+        log.warning("Could not recover main window: %s", exc)
+        return False
+
+
 def human_scroll(driver: webdriver.Firefox):
     """Scroll the page in a human-like pattern."""
     try:
@@ -106,39 +124,21 @@ def human_scroll(driver: webdriver.Firefox):
         log.debug("Scroll interrupted: %s", exc)
 
 
-def get_adnauseam_extension_url(driver: webdriver.Firefox) -> str | None:
-    """Find the moz-extension:// UUID for AdNauseam by scanning open pages."""
-    try:
-        # Open AdNauseam options in a new tab — Firefox will resolve the UUID
-        driver.execute_script("window.open('about:blank', '_blank')")
-        driver.switch_to.window(driver.window_handles[-1])
-        # Trigger the extension page via the browser action
-        ext_url = driver.execute_script("""
-            return new Promise(resolve => {
-                browser.management.getAll().then(exts => {
-                    const adn = exts.find(e => e.name && e.name.toLowerCase().includes('adnauseam'));
-                    resolve(adn ? adn.optionsUrl : null);
-                }).catch(() => resolve(null));
-            });
-        """)
-        return ext_url
-    except WebDriverException:
-        return None
-
-
 def get_adnauseam_stats(driver: webdriver.Firefox) -> None:
-    """Navigate to AdNauseam options page and scrape its stats."""
-    original_url     = driver.current_url
-    original_handles = driver.window_handles[:]
+    """
+    Open AdNauseam's options page in a new tab, scrape stats, then close it.
+    Always restores the driver to a clean single-tab state afterwards.
+    """
+    main_handle = driver.window_handles[0]
 
     try:
-        # AdNauseam exposes stats via its options page DOM
-        # We open it in a new tab, read the counters, then close it
+        # Open a fresh tab for the stats check
+        driver.switch_to.window(main_handle)
         driver.execute_script("window.open('about:blank', '_blank')")
-        new_handle = [h for h in driver.window_handles if h not in original_handles][0]
-        driver.switch_to.window(new_handle)
+        stats_handle = driver.window_handles[-1]
+        driver.switch_to.window(stats_handle)
 
-        # Use the WebExtension management API to find the options URL
+        # Resolve AdNauseam's options URL via the WebExtension management API
         options_url = driver.execute_async_script("""
             const done = arguments[0];
             try {
@@ -152,54 +152,44 @@ def get_adnauseam_stats(driver: webdriver.Firefox) -> None:
         """)
 
         if not options_url:
-            log.debug("Could not resolve AdNauseam options URL")
-            driver.close()
-            driver.switch_to.window(original_handles[0])
+            log.debug("Could not resolve AdNauseam options URL — extension may still be initialising")
             return
 
-        log.debug("AdNauseam options page: %s", options_url)
+        log.debug("AdNauseam options URL: %s", options_url)
         driver.get(options_url)
-        time.sleep(2)  # let the page render its stats
+        time.sleep(2)
 
-        # Scrape the counters from the options page DOM
+        # Dump the raw page text at DEBUG so we can identify the right selectors
+        raw = driver.execute_script("return document.body.innerText || ''")
+        log.debug("AdNauseam options page text:\n%s", raw[:600])
+
+        # Scrape counters — selectors matched against AdNauseam 3.x DOM
         stats = driver.execute_script("""
-            try {
-                const getText = sel => {
-                    const el = document.querySelector(sel);
-                    return el ? el.textContent.trim() : null;
-                };
-                return {
-                    blocked: getText('.ad-count, #blocked-count, [data-count="blocked"]'),
-                    clicked: getText('.click-count, #clicked-count, [data-count="clicked"]'),
-                    visited: getText('.visit-count, #visited-count, [data-count="visited"]'),
-                    // Fallback: grab all visible numbers from the page
-                    raw: document.body.innerText.substring(0, 500),
-                };
-            } catch(e) { return { error: e.toString() }; }
+            const q = sel => {
+                const el = document.querySelector(sel);
+                return el ? el.textContent.trim() : null;
+            };
+            return {
+                blocked: q('#blocked-count, .blocked-count, [data-blocked]'),
+                clicked: q('#clicked-count, .clicked-count, [data-clicked]'),
+                visited: q('#visited-count, .visited-count, [data-visited]'),
+            };
         """)
 
-        if stats and not stats.get("error"):
-            if stats.get("blocked") or stats.get("clicked"):
-                log.info("AdNauseam — blocked: %s | clicked: %s | visited: %s",
-                         stats.get("blocked", "?"),
-                         stats.get("clicked", "?"),
-                         stats.get("visited", "?"))
-            else:
-                # Options page loaded but selectors didn't match — log raw text for debugging
-                log.debug("AdNauseam options page text (first 300 chars): %s",
-                          (stats.get("raw") or "")[:300])
+        if stats and (stats.get("blocked") or stats.get("clicked")):
+            log.info("AdNauseam — blocked: %s | clicked: %s | visited: %s",
+                     stats.get("blocked", "?"),
+                     stats.get("clicked", "?"),
+                     stats.get("visited", "?"))
         else:
-            log.debug("AdNauseam stats error: %s", stats)
+            log.debug("AdNauseam stats: selectors returned no matches (check DEBUG for page text)")
 
     except WebDriverException as exc:
-        log.debug("Could not read AdNauseam stats: %s", exc)
+        log.debug("AdNauseam stats check failed: %s", exc)
+
     finally:
-        # Always close the tab and return to original
-        try:
-            driver.close()
-            driver.switch_to.window(original_handles[0])
-        except WebDriverException:
-            pass
+        # Always clean up: close stats tab, switch back to main
+        ensure_main_window(driver)
 
 
 def build_driver() -> webdriver.Firefox:
@@ -240,6 +230,11 @@ def build_driver() -> webdriver.Firefox:
 
 def run_session(driver: webdriver.Firefox, session_num: int):
     """Navigate to a random seed URL and behave like a human for a randomized duration."""
+    # Ensure we're on the main tab before starting
+    if not ensure_main_window(driver):
+        log.warning("Session #%d skipped — could not get clean window state", session_num)
+        return
+
     url      = random.choice(SEED_URLS)
     duration = session_duration()
     log.info("Session #%d → %s", session_num, url)
