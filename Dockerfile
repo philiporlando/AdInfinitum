@@ -1,78 +1,50 @@
 # syntax=docker/dockerfile:1
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
+# --- Build-time Env ---
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    UV_PROJECT_ENVIRONMENT=/app/.venv \
-    PATH="/app/.venv/bin:/root/.local/bin:$PATH" \
-    MOZ_ALLOW_DOWNGRADE=1
+    UV_PYTHON=python3.13 \
+    PATH="/app/.venv/bin:/root/.local/bin:$PATH"
 
-# ── Firefox + all libs needed to run headless as root ────────────────────────
-RUN apt-get update && apt-get install -y \
+# --- Optimized Dependency Install ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
     firefox-esr \
     wget \
     ca-certificates \
-    tar \
     xvfb \
-    x11-utils \
+    xauth \
     libgtk-3-0 \
     libdbus-glib-1-2 \
     libxt6 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
     libgbm1 \
     libasound2 \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
-# ── geckodriver ───────────────────────────────────────────────────────────────
-RUN GECKODRIVER_VERSION="0.36.0" && \
-    wget -q -O /tmp/geckodriver.tar.gz \
-    "https://github.com/mozilla/geckodriver/releases/download/v${GECKODRIVER_VERSION}/geckodriver-v${GECKODRIVER_VERSION}-linux64.tar.gz" && \
+    && GECKODRIVER_VERSION="0.36.0" && \
+    wget -q -O /tmp/geckodriver.tar.gz "https://github.com/mozilla/geckodriver/releases/download/v${GECKODRIVER_VERSION}/geckodriver-v${GECKODRIVER_VERSION}-linux64.tar.gz" && \
     tar -xz -C /usr/local/bin -f /tmp/geckodriver.tar.gz && \
     chmod +x /usr/local/bin/geckodriver && \
-    rm /tmp/geckodriver.tar.gz
+    rm -rf /tmp/* /var/lib/apt/lists/*
 
-# ── AdNauseam ─────────────────────────────────────────────────────────────────
+# --- AdNauseam Extension ---
 RUN mkdir -p /extensions && \
     wget -q -O /extensions/adnauseam.xpi \
     "https://github.com/dhowe/AdNauseam/releases/download/v3.28.2/adnauseam-3.28.2.firefox.zip"
 
-# ── Python deps ───────────────────────────────────────────────────────────────
 WORKDIR /app
+
+# --- Project Setup ---
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
+
 COPY browse.py ./
 
-# ── Entrypoint script to start Xvfb and Python ────────────────────────────────
-RUN cat > /app/entrypoint.sh << 'EOF' && chmod +x /app/entrypoint.sh
-#!/bin/bash
-set -e
+# Healthcheck to see if the script is alive
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD test -f /tmp/heartbeat || exit 1
 
-export DISPLAY=:99
-export XVFBARGS="-screen 0 1280x900x24"
-
-# Start Xvfb in background
-echo "Starting Xvfb on $DISPLAY..."
-Xvfb $DISPLAY $XVFBARGS > /tmp/xvfb.log 2>&1 &
-XVFB_PID=$!
-
-# Give Xvfb time to start
-sleep 2
-
-# Trap to cleanup Xvfb on exit
-cleanup() {
-    echo "Stopping Xvfb..."
-    kill $XVFB_PID 2>/dev/null || true
-}
-trap cleanup EXIT
-
-# Run the Python script
-exec uv run python browse.py
-EOF
-
-ENTRYPOINT ["/app/entrypoint.sh"]
+CMD rm -f /tmp/.X*-lock && \
+    Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset & \
+    export DISPLAY=:99 && \
+    sleep 3 && \
+    uv run python -u browse.py
