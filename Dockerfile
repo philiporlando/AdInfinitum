@@ -1,5 +1,4 @@
 # syntax=docker/dockerfile:1
-# uv's official image — python:3.12-slim with uv pre-installed
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
