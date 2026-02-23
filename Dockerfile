@@ -37,6 +37,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
+COPY urls.json ./
 COPY browse.py ./
 
 # Healthcheck to see if the script is alive

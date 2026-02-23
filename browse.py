@@ -28,9 +28,20 @@ XPI_PATH = os.getenv("ADNAUSEAM_XPI", "/extensions/adnauseam.xpi")
 PROFILE_DIR = Path("/tmp/adnauseam_profile")
 HEARTBEAT_FILE = Path("/tmp/heartbeat")
 
-SEED_URLS = [
-    "https://www.yahoo.com",
-]
+def load_seed_urls():
+    config_path = Path("/app/urls.json")
+    try:
+        if config_path.exists():
+            urls = json.loads(config_path.read_text())
+            if urls:
+                log.info(f"📋   Loaded {len(urls)} URLs from urls.json")
+                return urls
+    except Exception as e:
+        log.warning(f"Failed to load urls.json: {e}")
+    log.info("📋   No urls.json found, using default")
+    return ["https://www.yahoo.com"]
+
+SEED_URLS = load_seed_urls()
 
 # --- Helper Functions ---
 
