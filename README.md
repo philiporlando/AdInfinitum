@@ -4,18 +4,15 @@ Runs the [AdNauseam](https://adnauseam.io/) browser extension in a Docker contai
 
 The tool orchestrates a headless Firefox instance with [Selenium](https://www.selenium.dev/), navigating seed URLs and performing randomized human-like behaviors to confound ad tracking and targeting systems.
 
+## Usage
 
----
-
-## Container Image
-
-The official image is published to GitHub Container Registry (GHCR): 
+### Docker
 
 ```bash
 docker run --rm --name adinfinitum ghcr.io/philiporlando/adinfinitum:latest
 ```
 
-## Docker Compose
+### Docker Compose
 
 ```yaml
 services:
