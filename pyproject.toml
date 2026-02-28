@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [tool.uv]
-package = false
+package = true
 
 [dependency-groups]
 dev = [
