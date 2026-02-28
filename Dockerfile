@@ -38,7 +38,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
-COPY urls.json main.py entrypoint.sh ./
+COPY urls.json ./src/main.py entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
 # --- Healthcheck ---

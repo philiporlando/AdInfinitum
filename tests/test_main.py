@@ -10,7 +10,7 @@ Coverage:
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 from pytest_mock import MockerFixture
@@ -799,12 +799,10 @@ class TestAdInfiniumRunLoop:
         mocker.patch.object(ai, "_browse")
         mocker.patch.object(ai, "_log_resources")
         mocker.patch.object(
-            ai.controller, "ready", new_callable=lambda: property(lambda self: True)
-        )
-        mocker.patch.object(
-            ai.controller,
-            "scrape_vault",
-            return_value=("clicked 5", "10 ads collected", "10"),
+            type(ai.controller),
+            "ready",
+            new_callable=PropertyMock,
+            return_value=True,
         )
 
         # Stop after one iteration by raising on the second call to random.choice
@@ -868,9 +866,10 @@ class TestAdInfiniumRunLoop:
             return_value=("clicked 0", "0 ads collected", "0"),
         )
         mocker.patch.object(
-            ai.controller,
+            type(ai.controller),
             "ready",
-            new_callable=lambda: property(lambda self: True),
+            new_callable=PropertyMock,
+            return_value=True,
         )
         restart_mock = mocker.patch.object(ai, "_restart")
         mocker.patch("src.main.random.choice", return_value="https://example.com")
