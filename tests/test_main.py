@@ -16,7 +16,7 @@ import pytest
 from pytest_mock import MockerFixture
 from selenium.common.exceptions import TimeoutException
 
-from src.main import AdInfinitum, AdNauseamController, BrowserManager, Settings
+from adinfinitum.main import AdInfinitum, AdNauseamController, BrowserManager, Settings
 
 
 # ---------------------------------------------------------------------------
@@ -96,10 +96,10 @@ class TestSettings:
         monkeypatch.setenv("ADNAUSEAM_XPI", "/custom/path/adnauseam.xpi")
         # Re-import to pick up env var (field default is evaluated at class definition)
         import importlib
-        import src.main
+        import adinfinitum.main
 
-        importlib.reload(src.main)
-        from src.main import Settings as ReloadedSettings
+        importlib.reload(adinfinitum.main)
+        from adinfinitum.main import Settings as ReloadedSettings
 
         s = ReloadedSettings()
         assert s.xpi_path == Path("/custom/path/adnauseam.xpi")
@@ -496,7 +496,7 @@ class TestAdNauseamControllerFilters:
             "_get_filter_count",
             side_effect=[0, 0, 155000],
         )
-        mocker.patch("src.main.time.sleep")
+        mocker.patch("adinfinitum.main.time.sleep")
         result = controller_with_uuid.wait_for_filters()
         assert result is True
 
@@ -507,7 +507,7 @@ class TestAdNauseamControllerFilters:
     ) -> None:
         """wait_for_filters should return False after the timeout is exceeded."""
         mocker.patch.object(controller_with_uuid, "_get_filter_count", return_value=0)
-        mocker.patch("src.main.time.sleep")
+        mocker.patch("adinfinitum.main.time.sleep")
         # Force immediate timeout by making time.time() advance past deadline
         call_count = 0
         original_time = __import__("time").time
@@ -517,7 +517,7 @@ class TestAdNauseamControllerFilters:
             call_count += 1
             return original_time() + (call_count * 100)
 
-        mocker.patch("src.main.time.time", side_effect=fast_time)
+        mocker.patch("adinfinitum.main.time.time", side_effect=fast_time)
         result = controller_with_uuid.wait_for_filters()
         assert result is False
         assert controller_with_uuid._filters_ready is False
@@ -698,7 +698,7 @@ class TestAdInfiniumBrowse:
         ai = AdInfinitum(settings)
         get_mock = mocker.patch.object(ai.browser, "get", return_value=True)
         script_mock = mocker.patch.object(ai.browser, "execute_script")
-        mocker.patch("src.main.time.sleep")
+        mocker.patch("adinfinitum.main.time.sleep")
         settings.heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
 
         ai._browse("https://example.com")
@@ -713,7 +713,7 @@ class TestAdInfiniumBrowse:
         ai = AdInfinitum(settings)
         mocker.patch.object(ai.browser, "get", return_value=True)
         mocker.patch.object(ai.browser, "execute_script")
-        mocker.patch("src.main.time.sleep")
+        mocker.patch("adinfinitum.main.time.sleep")
         heartbeat_mock = mocker.patch.object(ai, "_update_heartbeat")
 
         ai._browse("https://example.com")
@@ -816,7 +816,7 @@ class TestAdInfiniumRunLoop:
                 raise KeyboardInterrupt
             return original_choice(seq)
 
-        mocker.patch("src.main.random.choice", side_effect=limited_choice)
+        mocker.patch("adinfinitum.main.random.choice", side_effect=limited_choice)
 
         with pytest.raises((KeyboardInterrupt, SystemExit)):
             ai.run()
@@ -843,7 +843,9 @@ class TestAdInfiniumRunLoop:
             raise KeyboardInterrupt
 
         mocker.patch.object(ai, "_browse", side_effect=browse_side_effect)
-        mocker.patch("src.main.random.choice", return_value="https://example.com")
+        mocker.patch(
+            "adinfinitum.main.random.choice", return_value="https://example.com"
+        )
 
         with pytest.raises((KeyboardInterrupt, SystemExit)):
             ai.run()
@@ -872,7 +874,9 @@ class TestAdInfiniumRunLoop:
             return_value=True,
         )
         restart_mock = mocker.patch.object(ai, "_restart")
-        mocker.patch("src.main.random.choice", return_value="https://example.com")
+        mocker.patch(
+            "adinfinitum.main.random.choice", return_value="https://example.com"
+        )
 
         call_count = 0
 
@@ -883,7 +887,7 @@ class TestAdInfiniumRunLoop:
                 raise KeyboardInterrupt
             return "https://example.com"
 
-        mocker.patch("src.main.random.choice", side_effect=stop_after_three)
+        mocker.patch("adinfinitum.main.random.choice", side_effect=stop_after_three)
 
         with pytest.raises((KeyboardInterrupt, SystemExit)):
             ai.run()
