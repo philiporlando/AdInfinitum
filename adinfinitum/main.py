@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-"""
-AdInfinitum — Automated AdNauseam browsing agent.
-
-Boots a headless Firefox instance with the AdNauseam extension injected,
-visits ad-heavy seed URLs in a loop, and reports vault statistics (ads
-clicked, collected, and showing) via structured logs.
-"""
-
 import json
 import logging
 import os
@@ -25,10 +16,6 @@ from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
 from selenium.common.exceptions import TimeoutException
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -39,11 +26,6 @@ log = logging.getLogger("AdInfinitum")
 
 # TypeVar used to make execute_script generic over its return type.
 T = TypeVar("T")
-
-
-# ---------------------------------------------------------------------------
-# Settings
-# ---------------------------------------------------------------------------
 
 
 class Settings(BaseModel):
@@ -102,11 +84,6 @@ class Settings(BaseModel):
 
     default_urls: list[str] = ["https://www.yahoo.com"]
     """Fallback seed URL list used when urls.json is absent or unreadable."""
-
-
-# ---------------------------------------------------------------------------
-# Browser Manager
-# ---------------------------------------------------------------------------
 
 
 class BrowserManager:
@@ -264,11 +241,6 @@ class BrowserManager:
             self.driver.set_page_load_timeout(seconds)
 
 
-# ---------------------------------------------------------------------------
-# AdNauseam Controller
-# ---------------------------------------------------------------------------
-
-
 class AdNauseamController:
     """
     Controls AdNauseam extension state within a running Firefox session.
@@ -318,8 +290,6 @@ class AdNauseamController:
             True when UUID is known, settings are activated, and filters are loaded.
         """
         return bool(self._uuid) and self._activated and self._filters_ready
-
-    # --- UUID Discovery ---
 
     def _uuid_from_prefs(self) -> str | None:
         """
@@ -404,8 +374,6 @@ class AdNauseamController:
         log.warning("Extension not found")
         return False
 
-    # --- Settings Activation ---
-
     def activate(self) -> bool:
         """
         Ensure AdNauseam's core features are enabled via the options page.
@@ -459,8 +427,6 @@ class AdNauseamController:
             self.browser.set_page_load_timeout(self.settings.page_load_timeout)
 
         return self._activated
-
-    # --- Filter Readiness ---
 
     def _get_filter_count(self) -> int:
         """
@@ -531,8 +497,6 @@ class AdNauseamController:
         )
         return False
 
-    # --- Vault Stats ---
-
     def scrape_vault(self) -> tuple[str, str, str]:
         """
         Scrape click and collection statistics from the AdNauseam vault.
@@ -580,11 +544,6 @@ class AdNauseamController:
             return "clicked ?", "? ads collected", "?"
         finally:
             self.browser.set_page_load_timeout(self.settings.page_load_timeout)
-
-
-# ---------------------------------------------------------------------------
-# AdInfinitum — Main Orchestrator
-# ---------------------------------------------------------------------------
 
 
 class AdInfinitum:
@@ -741,10 +700,6 @@ class AdInfinitum:
                 self.browser.restart()
                 self.controller.reset()
 
-
-# ---------------------------------------------------------------------------
-# Entry Point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     AdInfinitum(settings=Settings()).run()
