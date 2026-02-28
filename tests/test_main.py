@@ -1,13 +1,3 @@
-"""
-Tests for AdInfinitum — main.py
-
-Coverage:
-  - Settings: validation, defaults, env var override
-  - BrowserManager: options construction, execute_script typing, get() timeout handling
-  - AdNauseamController: UUID discovery, activation, filter polling, vault scraping, reset/ready
-  - AdInfinitum: URL loading, resource logging, browsing, setup, restart, run loop
-"""
-
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock
@@ -17,11 +7,6 @@ from pytest_mock import MockerFixture
 from selenium.common.exceptions import TimeoutException
 
 from adinfinitum.main import AdInfinitum, AdNauseamController, BrowserManager, Settings
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -70,11 +55,6 @@ def controller_with_uuid(controller: AdNauseamController) -> AdNauseamController
     """Return a controller with a UUID already set."""
     controller._uuid = "test-uuid-1234"
     return controller
-
-
-# ---------------------------------------------------------------------------
-# Settings
-# ---------------------------------------------------------------------------
 
 
 class TestSettings:
@@ -134,11 +114,6 @@ class TestSettings:
         assert s.profile_dir == tmp_path / "profile"
         assert s.filter_poll_interval == 10
         assert s.session_restart_interval == 50
-
-
-# ---------------------------------------------------------------------------
-# BrowserManager
-# ---------------------------------------------------------------------------
 
 
 class TestBrowserManager:
@@ -239,11 +214,6 @@ class TestBrowserManager:
         """set_page_load_timeout() should delegate to the driver."""
         browser_with_driver.set_page_load_timeout(30)
         mock_driver.set_page_load_timeout.assert_called_once_with(30)
-
-
-# ---------------------------------------------------------------------------
-# AdNauseamController
-# ---------------------------------------------------------------------------
 
 
 class TestAdNauseamControllerReset:
@@ -611,11 +581,6 @@ class TestAdNauseamControllerVault:
         assert clicked == "clicked 5"
         assert collected == "? ads collected"
         assert showing == "?"
-
-
-# ---------------------------------------------------------------------------
-# AdInfinitum
-# ---------------------------------------------------------------------------
 
 
 class TestAdInfiniumURLLoading:
