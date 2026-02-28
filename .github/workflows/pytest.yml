@@ -18,8 +18,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up project dependencies
-        run: |
-          pip install uv
-          uv sync --frozen --group dev
+        run: uv sync --frozen --group dev
       - name: Run tests
         run: uv run pytest -q
