@@ -1,0 +1,26 @@
+name: ruff
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+
+    container:
+      image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dev dependencies
+        run: UV_LINK_MODE=copy uv sync --frozen --group dev
+
+      - name: Run ruff
+        run: uv run ruff check .
