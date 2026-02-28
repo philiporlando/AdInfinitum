@@ -20,15 +20,16 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
-    stream=sys.stdout
+    stream=sys.stdout,
 )
-log = logging.getLogger("AdNauseam")
+log = logging.getLogger("AdInfinitum")
 
 XPI_PATH = os.getenv("ADNAUSEAM_XPI", "/extensions/adnauseam.xpi")
 PROFILE_DIR = Path("/tmp/adnauseam_profile")
 HEARTBEAT_FILE = Path("/tmp/heartbeat")
-FILTER_POLL_INTERVAL = 5    # seconds between filter readiness checks
-FILTER_POLL_TIMEOUT  = 300  # max seconds to wait for filter lists
+FILTER_POLL_INTERVAL = 5  # seconds between filter readiness checks
+FILTER_POLL_TIMEOUT = 300  # max seconds to wait for filter lists
+
 
 def load_seed_urls():
     config_path = Path("/app/urls.json")
@@ -36,33 +37,42 @@ def load_seed_urls():
         if config_path.exists():
             urls = json.loads(config_path.read_text())
             if urls:
-                log.info(f"📋   Loaded {len(urls)} URLs from urls.json")
+                log.info(f"Loaded {len(urls)} URLs from urls.json")
                 return urls
     except Exception as e:
         log.warning(f"Failed to load urls.json: {e}")
-    log.info("📋   No urls.json found, using default")
+    log.info("No urls.json found, using default")
     return ["https://www.yahoo.com"]
+
 
 SEED_URLS = load_seed_urls()
 
 # --- Helper Functions ---
 
+
 def update_heartbeat():
     HEARTBEAT_FILE.touch(exist_ok=True)
+
 
 def get_resource_usage():
     try:
         with open("/sys/fs/cgroup/memory.current", "r") as f:
             mem_bytes = int(f.read().strip())
-        profile_size = sum(f.stat().st_size for f in PROFILE_DIR.rglob('*') if f.is_file())
-        log.info(f"📊   STATS: RAM: {mem_bytes/(1024**2):.2f}MB | Profile: {profile_size/(1024**2):.2f}MB")
+        profile_size = sum(
+            f.stat().st_size for f in PROFILE_DIR.rglob("*") if f.is_file()
+        )
+        log.info(
+            f"RAM: {mem_bytes / (1024**2):.2f}MB | Profile: {profile_size / (1024**2):.2f}MB"
+        )
     except:
         pass
 
+
 def cleanup():
-    log.info("🧹   Clearing old browser instances...")
+    log.info("Clearing old browser instances...")
     subprocess.run(["pkill", "-9", "firefox"], capture_output=True)
     subprocess.run(["pkill", "-9", "geckodriver"], capture_output=True)
+
 
 def find_uuid_from_prefs():
     """
@@ -73,16 +83,16 @@ def find_uuid_from_prefs():
     try:
         content = prefs_file.read_text()
         match = re.search(
-            r'user_pref\("extensions\.webextensions\.uuids",\s*"(.*?)"\)',
-            content
+            r'user_pref\("extensions\.webextensions\.uuids",\s*"(.*?)"\)', content
         )
         if match:
-            raw = match.group(1).replace('\\"', '"').replace('\\\\', '\\')
+            raw = match.group(1).replace('\\"', '"').replace("\\\\", "\\")
             uuid_map = json.loads(raw)
             return uuid_map.get("adnauseam@rednoise.org")
     except Exception as e:
         log.debug(f"Prefs UUID lookup failed: {e}")
     return None
+
 
 def find_uuid_from_debugger(driver):
     """
@@ -109,21 +119,23 @@ def find_uuid_from_debugger(driver):
         log.debug(f"Debugger UUID search failed: {e}")
         return None
 
+
 def find_uuid(driver):
     """
     Attempt UUID discovery via prefs.js first, fall back to about:debugging.
     """
-    log.info("🔍   Checking prefs.js for UUID...")
+    log.info("Locating AdNauseam extension...")
     uuid = find_uuid_from_prefs()
     if uuid:
-        log.info(f"✅   UUID found in prefs: {uuid}")
+        log.info("Extension located via prefs.js")
         return uuid
 
-    log.info("🔍   Falling back to about:debugging...")
+    log.info("Trying fallback detection via about:debugging...")
     uuid = find_uuid_from_debugger(driver)
     if uuid:
-        log.info(f"✅   UUID found via debugger: {uuid}")
+        log.info("Extension located via debugger")
     return uuid
+
 
 def activate_adnauseam(driver, uuid):
     """
@@ -136,7 +148,7 @@ def activate_adnauseam(driver, uuid):
     try:
         driver.set_page_load_timeout(20)
         driver.get(options_url)
-        time.sleep(6)  # wait for iframe + JS to fully render
+        time.sleep(6)
 
         result = driver.execute_script("""
             const iframe = document.getElementById('iframe');
@@ -163,19 +175,20 @@ def activate_adnauseam(driver, uuid):
             return results;
         """)
 
-        if isinstance(result, dict) and 'error' not in result:
-            activated = [k for k, v in result.items() if v == 'activated']
+        if isinstance(result, dict) and "error" not in result:
+            activated = [k for k, v in result.items() if v == "activated"]
             if activated:
-                log.info(f"⚙️    Enabled: {', '.join(activated)}")
+                log.info(f"Enabled: {', '.join(activated)}")
             else:
-                log.info(f"⚙️    All ad detection settings already active")
+                log.info("All ad detection settings already active")
         else:
-            log.warning(f"⚙️    Settings check returned unexpected result: {result}")
+            log.warning(f"Settings check returned unexpected result: {result}")
 
     except Exception as e:
         log.warning(f"Settings activation failed: {e}")
     finally:
         driver.set_page_load_timeout(45)
+
 
 def get_filter_count(driver, uuid):
     """
@@ -199,35 +212,40 @@ def get_filter_count(driver, uuid):
         """)
 
         if text:
-            # Parse "167,399 network filters..." -> 167399
-            match = re.search(r'([\d,]+)\s+network filters', text)
+            match = re.search(r"([\d,]+)\s+network filters", text)
             if match:
-                return int(match.group(1).replace(',', ''))
+                return int(match.group(1).replace(",", ""))
     except:
         pass
     return 0
+
 
 def wait_for_filters(driver, uuid):
     """
     Poll #listsOfBlockedHostsPrompt until network filter count is non-zero,
     confirming AdNauseam's filter lists have fully downloaded and are active.
     """
-    log.info("⏳   Waiting for ad detection rules to download...")
+    log.info("Waiting for ad detection rules to download...")
     deadline = time.time() + FILTER_POLL_TIMEOUT
     elapsed = 0
 
     while time.time() < deadline:
         count = get_filter_count(driver, uuid)
         if count > 0:
-            log.info(f"✅   Ad detection ready — {count:,} rules loaded ({elapsed}s)")
+            log.info(
+                f"Ad detection ready — {count:,} network rules loaded ({elapsed}s)"
+            )
             return True
         elapsed += FILTER_POLL_INTERVAL
-        log.info(f"⏳   Still downloading rules... ({elapsed}s elapsed)")
+        log.info(f"Still downloading rules... ({elapsed}s elapsed)")
         update_heartbeat()
         time.sleep(FILTER_POLL_INTERVAL)
 
-    log.warning(f"⚠️   Rule download timed out after {FILTER_POLL_TIMEOUT}s, proceeding anyway")
+    log.warning(
+        f"Rule download timed out after {FILTER_POLL_TIMEOUT}s, proceeding anyway"
+    )
     return False
+
 
 def scrape_vault_stats(driver, uuid):
     """
@@ -255,9 +273,9 @@ def scrape_vault_stats(driver, uuid):
             };
         """)
 
-        clicked   = stats.get("clicked")   or "clicked ?"
+        clicked = stats.get("clicked") or "clicked ?"
         collected = stats.get("collected") or "? ads collected"
-        showing   = stats.get("showing")   or "?"
+        showing = stats.get("showing") or "?"
 
         return clicked, collected, showing
 
@@ -267,12 +285,13 @@ def scrape_vault_stats(driver, uuid):
     finally:
         driver.set_page_load_timeout(45)
 
+
 def build_driver():
     cleanup()
     if not PROFILE_DIR.exists():
         PROFILE_DIR.mkdir(parents=True)
 
-    log.info("🦊   Booting Firefox...")
+    log.info("Booting Firefox...")
     opts = Options()
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
@@ -290,21 +309,23 @@ def build_driver():
         service = Service(executable_path="/usr/local/bin/geckodriver")
         driver = webdriver.Firefox(options=opts, service=service)
 
-        log.info("💉   Injecting AdNauseam...")
+        log.info("Injecting AdNauseam...")
         driver.install_addon(XPI_PATH, temporary=True)
 
         return driver
     except Exception as e:
-        log.error(f"❌   Boot failed: {e}")
+        log.error(f"Boot failed: {e}")
         return None
 
+
 # --- Main Logic ---
+
 
 def main():
     signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
     signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
 
-    log.info("♾️    AdInfinitum Started")
+    log.info("AdInfinitum started")
     driver = build_driver()
     if not driver:
         sys.exit(1)
@@ -318,14 +339,14 @@ def main():
         try:
             url = random.choice(SEED_URLS)
             session_count += 1
-            log.info(f"🌐   Session #{session_count}: {url}")
+            log.info(f"Session #{session_count}: {url}")
             get_resource_usage()
 
             driver.set_page_load_timeout(45)
             try:
                 driver.get(url)
             except TimeoutException:
-                log.warning("⏳   Page load timed out, proceeding anyway...")
+                log.warning("Page load timed out, proceeding anyway...")
 
             update_heartbeat()
 
@@ -352,13 +373,13 @@ def main():
             # Vault Stats
             if current_uuid:
                 clicked, collected, showing = scrape_vault_stats(driver, current_uuid)
-                log.info(f"☠️    VAULT — {clicked} | {collected} | {showing} showing")
+                log.info(f"Vault: {clicked} | {collected} | {showing} showing")
             else:
-                log.warning("⚠️    UUID Discovery failed — vault stats unavailable.")
+                log.warning("Extension not found — vault stats unavailable")
 
             # Scheduled Restart
             if session_count % 25 == 0:
-                log.info("♻️    Scheduled restart...")
+                log.info("Scheduled restart...")
                 driver.quit()
                 driver = build_driver()
                 current_uuid = None
@@ -366,11 +387,12 @@ def main():
                 filters_ready = False
 
         except Exception as e:
-            log.error(f"⚠️    Loop Error: {e}")
+            log.error(f"Loop error: {e}")
             driver = build_driver()
             current_uuid = None
             activated = False
             filters_ready = False
+
 
 if __name__ == "__main__":
     main()

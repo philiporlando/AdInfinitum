@@ -1,11 +1,11 @@
 services:
-  adnauseam:
+  adinfinitum:
     build: .
-    container_name: adnauseam
+    container_name: adinfinitum
     restart: unless-stopped
     env_file: .env
     ipc: host
-    shm_size: "4gb"
+    shm_size: "1gb"
     cap_add:
       - SYS_ADMIN
     security_opt:
@@ -18,12 +18,12 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: 8G 
-        reservations:
+          cpus: "1"
           memory: 4G
+        reservations:
+          memory: 1G
     healthcheck:
-      test: ["CMD-SHELL", "find /tmp/heartbeat -mmin -5 | grep -q /tmp/heartbeat"]
+      test: [ "CMD-SHELL", "find /tmp/heartbeat -mmin -5 | grep -q /tmp/heartbeat" ]
       interval: 1m
       timeout: 10s
       retries: 3

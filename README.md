@@ -1,4 +1,4 @@
-# ♾️ AdInfinitum
+# AdInfinitum
 
 Runs the [AdNauseam](https://adnauseam.io/) browser extension in a Docker container, automatically browsing the web to poison advertising profiles through simulated clicks.
 

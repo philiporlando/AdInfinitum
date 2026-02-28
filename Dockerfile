@@ -20,15 +20,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxt6 \
     libgbm1 \
     libasound2 \
-    && GECKODRIVER_VERSION="0.36.0" && \
-    wget -q -O /tmp/geckodriver.tar.gz "https://github.com/mozilla/geckodriver/releases/download/v${GECKODRIVER_VERSION}/geckodriver-v${GECKODRIVER_VERSION}-linux64.tar.gz" && \
-    tar -xz -C /usr/local/bin -f /tmp/geckodriver.tar.gz && \
-    chmod +x /usr/local/bin/geckodriver && \
-    rm -rf /tmp/* /var/lib/apt/lists/*
+    && GECKODRIVER_VERSION="0.36.0" \
+    && wget -q -O /tmp/geckodriver.tar.gz \
+    "https://github.com/mozilla/geckodriver/releases/download/v${GECKODRIVER_VERSION}/geckodriver-v${GECKODRIVER_VERSION}-linux64.tar.gz" \
+    && tar -xz -C /usr/local/bin -f /tmp/geckodriver.tar.gz \
+    && chmod +x /usr/local/bin/geckodriver \
+    && rm -rf /tmp/* /var/lib/apt/lists/*
 
 # --- AdNauseam Extension ---
-RUN mkdir -p /extensions && \
-    wget -q -O /extensions/adnauseam.xpi \
+RUN mkdir -p /extensions \
+    && wget -q -O /extensions/adnauseam.xpi \
     "https://github.com/dhowe/AdNauseam/releases/download/v3.28.2/adnauseam-3.28.2.firefox.zip"
 
 WORKDIR /app
@@ -37,11 +38,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
-COPY urls.json ./
-COPY browse.py ./
+COPY urls.json main.py entrypoint.sh ./
+RUN chmod +x entrypoint.sh
 
-# Healthcheck to see if the script is alive
+# --- Healthcheck ---
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD test -f /tmp/heartbeat || exit 1
+    CMD test -f /tmp/heartbeat || exit 1
 
-CMD ["sh", "-c", "rm -f /tmp/.X*-lock && Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & export DISPLAY=:99 && sleep 3 && uv run python -u browse.py"]
+ENTRYPOINT ["./entrypoint.sh"]
