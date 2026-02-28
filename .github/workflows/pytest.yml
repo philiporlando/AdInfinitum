@@ -9,6 +9,8 @@ on:
   workflow_dispatch:
 jobs:
   test:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
