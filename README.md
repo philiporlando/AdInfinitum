@@ -1,6 +1,6 @@
 # AdInfinitum
 
-Runs the [AdNauseam](https://adnauseam.io/) browser extension ad infinitum in a Docker container, automatically browsing the web to poison advertising profiles through simulated clicks.
+Runs the [AdNauseam](https://adnauseam.io/) browser extension in a Docker container ad infinitum, automatically browsing the web to poison advertising profiles through simulated clicks.
 
 The tool orchestrates a headless Firefox instance with [Selenium](https://www.selenium.dev/), navigating seed URLs and performing randomized human-like behaviors to confound ad tracking and targeting systems.
 
