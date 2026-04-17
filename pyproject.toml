@@ -1,6 +1,6 @@
 [project]
 name = "ad-infinitum"
-version = "0.1.0"
+version = "0.1.1"
 description = "Run the AdNauseam browser extension in a Docker container ad infinitum."
 readme = "README.md"
 requires-python = ">=3.13"

@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 from typing import TypeVar
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 from selenium import webdriver
@@ -573,20 +574,40 @@ class AdInfinitum:
         """
         Load seed URLs from the configured JSON file.
 
-        Falls back to settings.default_urls if the file is absent,
-        empty, or cannot be parsed.
+        Validates that the file contains a JSON array of strings with valid
+        http/https URLs. Invalid entries are skipped with a warning. Falls back
+        to settings.default_urls if the file is absent, unparseable, not a list,
+        or yields no valid URLs after filtering.
 
         Returns:
             A list of seed URL strings.
         """
         try:
             if self.settings.urls_path.exists():
-                urls: list[str] = json.loads(self.settings.urls_path.read_text())
-                if urls:
-                    log.info(
-                        f"Loaded {len(urls)} URLs from {self.settings.urls_path.name}"
+                parsed = json.loads(self.settings.urls_path.read_text())
+                if not isinstance(parsed, list):
+                    log.warning(
+                        f"urls.json must contain a JSON array, got {type(parsed).__name__}"
                     )
-                    return urls
+                    return self.settings.default_urls
+                valid: list[str] = []
+                for entry in parsed:
+                    if not isinstance(entry, str):
+                        log.warning(f"Skipping non-string entry in urls.json: {entry!r}")
+                        continue
+                    scheme = urlparse(entry).scheme
+                    if scheme not in ("http", "https"):
+                        log.warning(f"Skipping invalid URL in urls.json: {entry!r}")
+                        continue
+                    valid.append(entry)
+                if valid:
+                    skipped = len(parsed) - len(valid)
+                    if skipped:
+                        log.warning(f"Skipped {skipped} invalid entries in urls.json")
+                    log.info(
+                        f"Loaded {len(valid)} URLs from {self.settings.urls_path.name}"
+                    )
+                    return valid
         except Exception as e:
             log.warning(f"Failed to load urls.json: {e}")
         log.info("No urls.json found, using default")

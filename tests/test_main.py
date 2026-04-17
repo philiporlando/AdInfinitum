@@ -609,6 +609,40 @@ class TestAdInfiniumURLLoading:
         ai = AdInfinitum(settings)
         assert ai.seed_urls == settings.default_urls
 
+    def test_falls_back_when_json_is_not_a_list(self, settings: Settings) -> None:
+        """_load_urls should return default_urls when urls.json contains a non-list value."""
+        settings.urls_path.write_text(json.dumps({"url": "https://a.com"}))
+        ai = AdInfinitum(settings)
+        assert ai.seed_urls == settings.default_urls
+
+    def test_skips_non_string_entries(self, settings: Settings) -> None:
+        """_load_urls should skip non-string entries and keep valid URLs."""
+        settings.urls_path.write_text(json.dumps(["https://a.com", 42, None]))
+        ai = AdInfinitum(settings)
+        assert ai.seed_urls == ["https://a.com"]
+
+    def test_skips_urls_without_http_scheme(self, settings: Settings) -> None:
+        """_load_urls should skip entries that lack an http or https scheme."""
+        settings.urls_path.write_text(
+            json.dumps(["https://a.com", "www.no-scheme.com", "ftp://b.com"])
+        )
+        ai = AdInfinitum(settings)
+        assert ai.seed_urls == ["https://a.com"]
+
+    def test_accepts_http_and_https_schemes(self, settings: Settings) -> None:
+        """_load_urls should accept both http and https URLs."""
+        settings.urls_path.write_text(
+            json.dumps(["http://a.com", "https://b.com"])
+        )
+        ai = AdInfinitum(settings)
+        assert ai.seed_urls == ["http://a.com", "https://b.com"]
+
+    def test_falls_back_when_all_entries_invalid(self, settings: Settings) -> None:
+        """_load_urls should return default_urls when every entry is invalid."""
+        settings.urls_path.write_text(json.dumps(["not-a-url", "also-bad"]))
+        ai = AdInfinitum(settings)
+        assert ai.seed_urls == settings.default_urls
+
 
 class TestAdInfiniumHeartbeat:
     """Tests for _update_heartbeat()."""
