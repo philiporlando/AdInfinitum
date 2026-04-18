@@ -632,9 +632,7 @@ class TestAdInfiniumURLLoading:
 
     def test_accepts_http_and_https_schemes(self, settings: Settings) -> None:
         """_load_urls should accept both http and https URLs."""
-        settings.urls_path.write_text(
-            json.dumps(["http://a.com", "https://b.com"])
-        )
+        settings.urls_path.write_text(json.dumps(["http://a.com", "https://b.com"]))
         ai = AdInfinitum(settings)
         assert ai.seed_urls == ["http://a.com", "https://b.com"]
 

@@ -22,5 +22,7 @@ jobs:
       - name: Install dev dependencies
         run: UV_LINK_MODE=copy uv sync --frozen --group dev
 
-      - name: Run ruff
+      - name: Run ruff check
         run: uv run ruff check .
+      - name: Run ruff format
+        run: uv run ruff format --check .

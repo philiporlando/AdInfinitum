@@ -593,7 +593,9 @@ class AdInfinitum:
                 valid: list[str] = []
                 for entry in parsed:
                     if not isinstance(entry, str):
-                        log.warning(f"Skipping non-string entry in urls.json: {entry!r}")
+                        log.warning(
+                            f"Skipping non-string entry in urls.json: {entry!r}"
+                        )
                         continue
                     scheme = urlparse(entry).scheme
                     if scheme not in ("http", "https"):
