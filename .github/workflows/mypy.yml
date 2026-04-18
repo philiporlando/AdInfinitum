@@ -1,0 +1,22 @@
+name: mypy
+permissions:
+  contents: read
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  type-check:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up project dependencies
+        run: uv sync --frozen --group dev
+      - name: Run mypy
+        run: uv run mypy

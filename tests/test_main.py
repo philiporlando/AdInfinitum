@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock
 
@@ -28,9 +29,9 @@ def browser(settings: Settings) -> BrowserManager:
 
 
 @pytest.fixture
-def mock_driver(mocker: MockerFixture) -> MagicMock:
+def mock_driver() -> MagicMock:
     """Return a MagicMock standing in for a Firefox WebDriver."""
-    return mocker.MagicMock()
+    return MagicMock()
 
 
 @pytest.fixture
@@ -480,7 +481,7 @@ class TestAdNauseamControllerFilters:
         mocker.patch("adinfinitum.main.time.sleep")
         # Force immediate timeout by making time.time() advance past deadline
         call_count = 0
-        original_time = __import__("time").time
+        original_time: Callable[[], float] = __import__("time").time
 
         def fast_time() -> float:
             nonlocal call_count
@@ -806,9 +807,9 @@ class TestAdInfiniumRunLoop:
 
         # Stop after one iteration by raising on the second call to random.choice
         call_count = 0
-        original_choice = __import__("random").choice
+        original_choice: Callable[[list[str]], str] = __import__("random").choice
 
-        def limited_choice(seq: list) -> str:
+        def limited_choice(seq: list[str]) -> str:
             nonlocal call_count
             call_count += 1
             if call_count > 1:
