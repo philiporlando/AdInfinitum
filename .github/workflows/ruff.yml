@@ -17,7 +17,7 @@ jobs:
       image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dev dependencies
         run: UV_LINK_MODE=copy uv sync --frozen --group dev
