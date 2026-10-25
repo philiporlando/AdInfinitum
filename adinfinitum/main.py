@@ -146,7 +146,13 @@ class BrowserManager:
 
         log.info("Booting Firefox...")
         try:
-            service = Service(executable_path=str(self.settings.geckodriver_path))
+            # Newer Firefox releases refuse WebDriver navigation to privileged
+            # moz-extension:// pages (options, filter lists, vault) unless
+            # geckodriver is started with system access enabled.
+            service = Service(
+                executable_path=str(self.settings.geckodriver_path),
+                service_args=["--allow-system-access"],
+            )
             self.driver = webdriver.Firefox(
                 options=self._build_options(),
                 service=service,

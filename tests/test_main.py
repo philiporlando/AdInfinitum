@@ -131,6 +131,18 @@ class TestBrowserManager:
         assert "--width=1920" in opts.arguments
         assert "--height=1080" in opts.arguments
 
+    def test_start_enables_system_access(
+        self, browser: BrowserManager, mocker: MockerFixture
+    ) -> None:
+        """start() should launch geckodriver with --allow-system-access so
+        moz-extension:// pages can be navigated to."""
+        mocker.patch.object(browser, "_kill_orphans")
+        service_mock = mocker.patch("adinfinitum.main.Service")
+        mocker.patch("adinfinitum.main.webdriver.Firefox")
+        assert browser.start() is True
+        _, kwargs = service_mock.call_args
+        assert "--allow-system-access" in kwargs["service_args"]
+
     def test_execute_script_returns_none_without_driver(
         self, browser: BrowserManager
     ) -> None:
