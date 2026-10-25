@@ -131,6 +131,13 @@ class TestBrowserManager:
         assert "--width=1920" in opts.arguments
         assert "--height=1080" in opts.arguments
 
+    def test_build_options_limits_memory(self, browser: BrowserManager) -> None:
+        """Firefox options should disable Fission and cap in-memory caches."""
+        prefs = browser._build_options().preferences
+        assert prefs["fission.autostart"] is False
+        assert prefs["browser.sessionhistory.max_total_viewers"] == 0
+        assert prefs["browser.cache.memory.capacity"] == 65536
+
     def test_start_enables_system_access(
         self, browser: BrowserManager, mocker: MockerFixture
     ) -> None:
