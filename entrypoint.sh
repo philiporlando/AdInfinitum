@@ -12,4 +12,4 @@ export DISPLAY=:99
 # Give Xvfb a moment to initialize
 sleep 3
 
-exec uv run python -u main.py
+exec uv run --no-sync python -u main.py

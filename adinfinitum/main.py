@@ -132,6 +132,13 @@ class BrowserManager:
         opts.set_preference("extensions.startupScanPolicy", 0)
         opts.set_preference("privacy.resistFingerprinting", False)
         opts.set_preference("dom.ipc.processCount", 1)
+        # Fission puts every cross-site iframe in its own content process, and
+        # ad-heavy pages embed dozens of them. Under tight container memory limits
+        # the kernel OOM-kills those processes, which Selenium surfaces as
+        # "Failed to decode response from marionette".
+        opts.set_preference("fission.autostart", False)
+        opts.set_preference("browser.sessionhistory.max_total_viewers", 0)
+        opts.set_preference("browser.cache.memory.capacity", 65536)
         return opts
 
     def start(self) -> bool:
