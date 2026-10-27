@@ -7,6 +7,8 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TypeVar
 from urllib.parse import urlparse
@@ -15,7 +17,8 @@ from pydantic import BaseModel, Field
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
-from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,6 +88,17 @@ class Settings(BaseModel):
 
     default_urls: list[str] = ["https://www.yahoo.com"]
     """Fallback seed URL list used when urls.json is absent or unreadable."""
+
+    accept_consent: bool = os.getenv("ACCEPT_CONSENT", "true").lower() != "false"
+    """Accept cookie consent banners so ads load for EU visitors. Disable with ACCEPT_CONSENT=false."""
+
+    consent_attempts: int = Field(default=3, ge=1)
+    """Number of scroll steps at the start of each page visit that check for a consent banner."""
+
+    screenshot_dir: Path | None = (
+        Path(os.environ["SCREENSHOT_DIR"]) if os.getenv("SCREENSHOT_DIR") else None
+    )
+    """If set (via SCREENSHOT_DIR), save a screenshot of each site after browsing it, for debugging."""
 
 
 class BrowserManager:
@@ -253,6 +267,54 @@ class BrowserManager:
         """
         if self.driver:
             self.driver.set_page_load_timeout(seconds)
+
+    @contextmanager
+    def in_frame(self, frame: WebElement) -> Iterator[None]:
+        """
+        Run the enclosed block inside an iframe, then return to the top document.
+
+        Args:
+            frame: The iframe element to switch into.
+        """
+        if not self.driver:
+            yield
+            return
+        self.driver.switch_to.frame(frame)
+        try:
+            yield
+        finally:
+            self.driver.switch_to.default_content()
+
+    def click(self, element: WebElement) -> None:
+        """
+        Click an element with a native (trusted) click, falling back to a JS click.
+
+        Some consent banners ignore the untrusted events that a JavaScript
+        ``el.click()`` produces, so a native click is tried first. If another
+        element covers the target, the JS click is used instead.
+
+        Args:
+            element: The element to click.
+        """
+        try:
+            element.click()
+        except WebDriverException:
+            self.execute_script(type(None), "arguments[0].click();", element)
+
+    def save_screenshot(self, path: Path) -> None:
+        """
+        Save a screenshot of the current viewport.
+
+        Args:
+            path: Destination PNG file. Parent directories are created as needed.
+        """
+        if not self.driver:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.driver.save_screenshot(str(path))
+        except Exception as e:
+            log.warning(f"Screenshot failed: {e}")
 
 
 class AdNauseamController:
@@ -560,6 +622,174 @@ class AdNauseamController:
             self.browser.set_page_load_timeout(self.settings.page_load_timeout)
 
 
+class ConsentHandler:
+    """
+    Accepts cookie consent banners so that ad scripts are allowed to load.
+
+    In the EU, most ad-supported sites hold back every ad until the visitor
+    accepts a GDPR consent banner, so without this AdNauseam never sees an ad
+    to collect. Known consent platforms are matched by selector first, then
+    any visible button whose label is a common "accept" phrase. Banners served
+    inside iframes (e.g. Sourcepoint) and open shadow roots (e.g. Usercentrics)
+    are searched too.
+    """
+
+    SELECTORS: dict[str, str] = {
+        "OneTrust": "#onetrust-accept-btn-handler",
+        "Didomi": "#didomi-notice-agree-button",
+        "Quantcast": ".qc-cmp2-summary-buttons button[mode='primary']",
+        "Google": ".fc-cta-consent",
+        "Sourcepoint": "button.sp_choice_type_11",
+        "Cookiebot": "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll, "
+        "#CybotCookiebotDialogBodyButtonAccept",
+        "Usercentrics": "[data-testid='uc-accept-all-button']",
+        "TrustArc": "#truste-consent-button",
+        "consentmanager": ".cmpboxbtnyes",
+        "Seznam": "[data-testid='cw-button-agree-with-ads']",
+        "Yahoo": ".consent-form button[name='agree']",
+    }
+    """Accept-button selectors for common consent management platforms, checked in order."""
+
+    ACCEPT_LABELS: list[str] = [
+        # en
+        "accept", "accept all", "accept all cookies", "accept cookies", "i accept",
+        "agree", "i agree", "agree and close", "agree and proceed", "allow all",
+        "allow all cookies", "accept and continue", "agree and continue",
+        "consent and continue", "accept and close",
+        # de
+        "akzeptieren", "alle akzeptieren", "zustimmen", "alle annehmen",
+        "einverstanden", "akzeptieren und weiter", "zustimmen und weiter",
+        "einwilligen und weiter",
+        # fr
+        "accepter", "tout accepter", "j'accepte", "accepter et fermer",
+        "accepter tout", "accepter et continuer",
+        # es / pt / it
+        "aceptar", "aceptar todo", "aceptar todas", "aceptar y continuar",
+        "aceitar", "aceitar tudo", "accetta", "accetta tutto", "accetto",
+        "accetta e continua", "accetta e chiudi",
+        # nl / da / sv / fi
+        "accepteren", "alles accepteren", "akkoord", "accepter alle",
+        "tillad alle", "acceptera alla", "godkänn alla", "hyväksy kaikki",
+        # pl / cs / sk / hu / ro
+        "akceptuję", "zaakceptuj wszystko", "zgadzam się", "přijmout vše",
+        "souhlasím", "přijmout", "souhlasím a pokračovat", "prijať všetko",
+        "súhlasím", "prijať", "súhlasím a pokračovať",
+        "elfogadom", "összes elfogadása", "accept tot", "sunt de acord",
+    ]  # fmt: skip
+    """Normalised button labels treated as "accept" when no known platform matches."""
+
+    FRAME_HINTS: list[str] = [
+        "sp_message_iframe",
+        "privacy-mgmt",
+        "consent",
+        "cmp",
+        "gdpr",
+        "privacy",
+        "cookie",
+    ]
+    """Substrings of an iframe's id, name, title, or src that mark it as a consent banner."""
+
+    _FIND_SCRIPT: str = """
+        const [selectors, labels] = arguments;
+        const roots = [document];
+        for (let i = 0; i < roots.length; i++) {
+            for (const el of roots[i].querySelectorAll('*')) {
+                if (el.shadowRoot) roots.push(el.shadowRoot);
+            }
+        }
+        const visible = el => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0
+                && getComputedStyle(el).visibility !== 'hidden';
+        };
+        for (const [name, selector] of Object.entries(selectors)) {
+            for (const root of roots) {
+                const el = root.querySelector(selector);
+                if (el && visible(el)) return [name, el];
+            }
+        }
+        const normalise = s => s.toLowerCase().replace(/’/g, "'")
+            .replace(/[^\\p{L}\\p{N}' ]+/gu, ' ').replace(/\\s+/g, ' ').trim();
+        const clickable = 'button, [role="button"], a, '
+            + 'input[type="button"], input[type="submit"]';
+        for (const root of roots) {
+            for (const el of root.querySelectorAll(clickable)) {
+                const label = normalise(el.innerText || el.value || '');
+                if (labels.includes(label) && visible(el)) {
+                    return [`"${label}" button`, el];
+                }
+            }
+        }
+        return null;
+    """
+
+    _FRAMES_SCRIPT: str = """
+        const hints = arguments[0];
+        return [...document.querySelectorAll('iframe')].filter(f => {
+            const desc = [f.id, f.name, f.title, f.src].join(' ').toLowerCase();
+            return hints.some(h => desc.includes(h));
+        });
+    """
+
+    def __init__(self, settings: Settings, browser: BrowserManager) -> None:
+        """
+        Initialise the handler.
+
+        Args:
+            settings: Validated AdInfinitum settings instance.
+            browser: The active BrowserManager to use for scripting.
+        """
+        self.settings = settings
+        self.browser = browser
+
+    def accept(self) -> str | None:
+        """
+        Click "accept" on the current page's consent banner, if one is showing.
+
+        Checks the top-level document first, then any iframe that looks like a
+        consent banner. Failures are logged at debug level and never raised, so
+        a page with an unusual banner doesn't interrupt the browsing loop.
+
+        Returns:
+            A description of what was clicked, or None if no banner was found.
+        """
+        if not self.settings.accept_consent:
+            return None
+        try:
+            clicked = self._click_accept()
+            if not clicked:
+                frames = self.browser.execute_script(
+                    list, self._FRAMES_SCRIPT, self.FRAME_HINTS
+                )
+                for frame in frames or []:
+                    with self.browser.in_frame(frame):
+                        clicked = self._click_accept()
+                    if clicked:
+                        break
+        except Exception as e:
+            log.debug(f"Consent check failed: {e}")
+            return None
+        if clicked:
+            log.info(f"Accepted consent banner ({clicked})")
+        return clicked
+
+    def _click_accept(self) -> str | None:
+        """
+        Find and click an accept button in the current document or frame.
+
+        Returns:
+            A description of what was clicked, or None if nothing matched.
+        """
+        match = self.browser.execute_script(
+            list, self._FIND_SCRIPT, self.SELECTORS, self.ACCEPT_LABELS
+        )
+        if not match:
+            return None
+        name, element = match
+        self.browser.click(element)
+        return str(name)
+
+
 class AdInfinitum:
     """
     Main orchestrator for the AdInfinitum browsing agent.
@@ -581,6 +811,7 @@ class AdInfinitum:
         self.controller: AdNauseamController = AdNauseamController(
             settings, self.browser
         )
+        self.consent: ConsentHandler = ConsentHandler(settings, self.browser)
         self.session_count: int = 0
 
     def _load_urls(self) -> list[str]:
@@ -654,6 +885,9 @@ class AdInfinitum:
 
         Navigates to the URL, then performs a random number of scroll steps
         with random distances and pauses, updating the heartbeat throughout.
+        The first few steps also check for a consent banner, since many load
+        a few seconds after the page does. If screenshot_dir is set, the page
+        is captured once scrolling finishes.
 
         Args:
             url: The URL to visit and scroll through.
@@ -664,7 +898,9 @@ class AdInfinitum:
             self.settings.scroll_steps_min,
             self.settings.scroll_steps_max,
         )
-        for _ in range(steps):
+        for step in range(steps):
+            if step < self.settings.consent_attempts:
+                self.consent.accept()
             scroll = random.randint(self.settings.scroll_min, self.settings.scroll_max)
             self.browser.execute_script(str, f"window.scrollBy(0, {scroll});")
             time.sleep(
@@ -674,6 +910,9 @@ class AdInfinitum:
                 )
             )
             self._update_heartbeat()
+        if self.settings.screenshot_dir:
+            host = urlparse(url).netloc or "page"
+            self.browser.save_screenshot(self.settings.screenshot_dir / f"{host}.png")
 
     def _setup(self) -> bool:
         """
