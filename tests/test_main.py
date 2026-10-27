@@ -5,9 +5,15 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 from pytest_mock import MockerFixture
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
-from adinfinitum.main import AdInfinitum, AdNauseamController, BrowserManager, Settings
+from adinfinitum.main import (
+    AdInfinitum,
+    AdNauseamController,
+    BrowserManager,
+    ConsentHandler,
+    Settings,
+)
 
 
 @pytest.fixture
@@ -234,6 +240,67 @@ class TestBrowserManager:
         """set_page_load_timeout() should delegate to the driver."""
         browser_with_driver.set_page_load_timeout(30)
         mock_driver.set_page_load_timeout.assert_called_once_with(30)
+
+    def test_in_frame_switches_and_restores(
+        self, browser_with_driver: BrowserManager, mock_driver: MagicMock
+    ) -> None:
+        """in_frame() should switch into the frame and back to the top document."""
+        frame = MagicMock()
+        with browser_with_driver.in_frame(frame):
+            mock_driver.switch_to.frame.assert_called_once_with(frame)
+            mock_driver.switch_to.default_content.assert_not_called()
+        mock_driver.switch_to.default_content.assert_called_once()
+
+    def test_in_frame_restores_on_exception(
+        self, browser_with_driver: BrowserManager, mock_driver: MagicMock
+    ) -> None:
+        """in_frame() should return to the top document even if the block raises."""
+        with pytest.raises(RuntimeError):
+            with browser_with_driver.in_frame(MagicMock()):
+                raise RuntimeError("boom")
+        mock_driver.switch_to.default_content.assert_called_once()
+
+    def test_click_uses_native_click(
+        self, browser_with_driver: BrowserManager, mock_driver: MagicMock
+    ) -> None:
+        """click() should use the element's native click when it succeeds."""
+        element = MagicMock()
+        browser_with_driver.click(element)
+        element.click.assert_called_once()
+        mock_driver.execute_script.assert_not_called()
+
+    def test_click_falls_back_to_js(
+        self, browser_with_driver: BrowserManager, mock_driver: MagicMock
+    ) -> None:
+        """click() should fall back to a JS click when the native click is intercepted."""
+        element = MagicMock()
+        element.click.side_effect = WebDriverException("intercepted")
+        browser_with_driver.click(element)
+        mock_driver.execute_script.assert_called_once_with(
+            "arguments[0].click();", element
+        )
+
+    def test_save_screenshot_creates_parent_dir(
+        self,
+        browser_with_driver: BrowserManager,
+        mock_driver: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """save_screenshot() should create the directory and write via the driver."""
+        path = tmp_path / "shots" / "example.com.png"
+        browser_with_driver.save_screenshot(path)
+        assert path.parent.is_dir()
+        mock_driver.save_screenshot.assert_called_once_with(str(path))
+
+    def test_save_screenshot_handles_exception(
+        self,
+        browser_with_driver: BrowserManager,
+        mock_driver: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """save_screenshot() should log and continue when the driver fails."""
+        mock_driver.save_screenshot.side_effect = WebDriverException("dead")
+        browser_with_driver.save_screenshot(tmp_path / "x.png")  # Should not raise
 
 
 class TestAdNauseamControllerReset:
@@ -603,6 +670,77 @@ class TestAdNauseamControllerVault:
         assert showing == "?"
 
 
+class TestConsentHandler:
+    """Tests for ConsentHandler — accepting cookie consent banners."""
+
+    @pytest.fixture
+    def consent(
+        self, settings: Settings, browser_with_driver: BrowserManager
+    ) -> ConsentHandler:
+        """Return a ConsentHandler with a mocked browser."""
+        return ConsentHandler(settings, browser_with_driver)
+
+    def test_accept_disabled_by_setting(
+        self, settings: Settings, consent: ConsentHandler, mocker: MockerFixture
+    ) -> None:
+        """accept() should do nothing when accept_consent is False."""
+        settings.accept_consent = False
+        script_mock = mocker.patch.object(consent.browser, "execute_script")
+        assert consent.accept() is None
+        script_mock.assert_not_called()
+
+    def test_accept_clicks_top_level_banner(
+        self, consent: ConsentHandler, mocker: MockerFixture
+    ) -> None:
+        """accept() should click a matching button in the top-level document."""
+        button = MagicMock()
+        mocker.patch.object(
+            consent.browser, "execute_script", return_value=["OneTrust", button]
+        )
+        click_mock = mocker.patch.object(consent.browser, "click")
+        assert consent.accept() == "OneTrust"
+        click_mock.assert_called_once_with(button)
+
+    def test_accept_searches_consent_frames(
+        self, consent: ConsentHandler, mocker: MockerFixture
+    ) -> None:
+        """accept() should look inside consent iframes when the top document has no banner."""
+        frame, button = MagicMock(), MagicMock()
+        mocker.patch.object(
+            consent.browser,
+            "execute_script",
+            side_effect=[None, [frame], ["Sourcepoint", button]],
+        )
+        frame_mock = mocker.patch.object(consent.browser, "in_frame")
+        click_mock = mocker.patch.object(consent.browser, "click")
+        assert consent.accept() == "Sourcepoint"
+        frame_mock.assert_called_once_with(frame)
+        click_mock.assert_called_once_with(button)
+
+    def test_accept_returns_none_without_banner(
+        self, consent: ConsentHandler, mocker: MockerFixture
+    ) -> None:
+        """accept() should return None when neither the page nor any frame has a banner."""
+        mocker.patch.object(consent.browser, "execute_script", side_effect=[None, []])
+        click_mock = mocker.patch.object(consent.browser, "click")
+        assert consent.accept() is None
+        click_mock.assert_not_called()
+
+    def test_accept_swallows_exceptions(
+        self, consent: ConsentHandler, mocker: MockerFixture
+    ) -> None:
+        """accept() should never raise, so an odd banner can't break the browse loop."""
+        mocker.patch.object(
+            consent.browser, "execute_script", side_effect=WebDriverException("boom")
+        )
+        assert consent.accept() is None
+
+    def test_accept_labels_are_normalised(self) -> None:
+        """ACCEPT_LABELS must be lowercase and whitespace-collapsed to match the JS normaliser."""
+        for label in ConsentHandler.ACCEPT_LABELS:
+            assert label == " ".join(label.lower().split())
+
+
 class TestAdInfiniumURLLoading:
     """Tests for _load_urls() — JSON loading and fallback behaviour."""
 
@@ -715,6 +853,7 @@ class TestAdInfiniumBrowse:
         ai = AdInfinitum(settings)
         get_mock = mocker.patch.object(ai.browser, "get", return_value=True)
         script_mock = mocker.patch.object(ai.browser, "execute_script")
+        mocker.patch.object(ai.consent, "accept", return_value=None)
         mocker.patch("adinfinitum.main.time.sleep")
         settings.heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -730,12 +869,59 @@ class TestAdInfiniumBrowse:
         ai = AdInfinitum(settings)
         mocker.patch.object(ai.browser, "get", return_value=True)
         mocker.patch.object(ai.browser, "execute_script")
+        mocker.patch.object(ai.consent, "accept", return_value=None)
         mocker.patch("adinfinitum.main.time.sleep")
         heartbeat_mock = mocker.patch.object(ai, "_update_heartbeat")
 
         ai._browse("https://example.com")
 
         assert heartbeat_mock.call_count >= 2  # once after get, once per scroll step
+
+    def test_browse_checks_consent_on_first_steps(
+        self, settings: Settings, mocker: MockerFixture
+    ) -> None:
+        """_browse should check for a consent banner on the first consent_attempts steps."""
+        ai = AdInfinitum(settings)
+        mocker.patch.object(ai.browser, "get", return_value=True)
+        mocker.patch.object(ai.browser, "execute_script")
+        accept_mock = mocker.patch.object(ai.consent, "accept", return_value=None)
+        mocker.patch("adinfinitum.main.time.sleep")
+        mocker.patch("adinfinitum.main.random.randint", return_value=5)
+
+        ai._browse("https://example.com")
+
+        assert accept_mock.call_count == settings.consent_attempts
+
+    def test_browse_saves_screenshot_when_configured(
+        self, settings: Settings, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """_browse should save a per-host screenshot when screenshot_dir is set."""
+        settings.screenshot_dir = tmp_path / "shots"
+        ai = AdInfinitum(settings)
+        mocker.patch.object(ai.browser, "get", return_value=True)
+        mocker.patch.object(ai.browser, "execute_script")
+        mocker.patch.object(ai.consent, "accept", return_value=None)
+        mocker.patch("adinfinitum.main.time.sleep")
+        shot_mock = mocker.patch.object(ai.browser, "save_screenshot")
+
+        ai._browse("https://www.example.com/page")
+
+        shot_mock.assert_called_once_with(tmp_path / "shots" / "www.example.com.png")
+
+    def test_browse_skips_screenshot_by_default(
+        self, settings: Settings, mocker: MockerFixture
+    ) -> None:
+        """_browse should not take screenshots when screenshot_dir is unset."""
+        ai = AdInfinitum(settings)
+        mocker.patch.object(ai.browser, "get", return_value=True)
+        mocker.patch.object(ai.browser, "execute_script")
+        mocker.patch.object(ai.consent, "accept", return_value=None)
+        mocker.patch("adinfinitum.main.time.sleep")
+        shot_mock = mocker.patch.object(ai.browser, "save_screenshot")
+
+        ai._browse("https://example.com")
+
+        shot_mock.assert_not_called()
 
 
 class TestAdInfiniumSetup:
